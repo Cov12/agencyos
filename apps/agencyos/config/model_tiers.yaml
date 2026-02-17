@@ -1,0 +1,55 @@
+# AgencyOS Model Routing Configuration
+# Defines which AI models are used at each organizational tier
+
+tiers:
+  premium:
+    description: "Executive-level reasoning (Chief AI)"
+    providers:
+      - provider: "anthropic"
+        model: "claude-sonnet-4-20250514"
+        priority: 1
+      - provider: "google"
+        model: "gemini-2.5-pro"
+        priority: 2
+    fallback: "mid"
+    max_tokens: 8192
+    temperature: 0.7
+
+  mid:
+    description: "Department head level (Sales, Customer, Back Office)"
+    providers:
+      - provider: "anthropic"
+        model: "claude-sonnet-4-20250514"
+        priority: 1
+      - provider: "google"
+        model: "gemini-2.5-flash"
+        priority: 2
+    fallback: "local"
+    max_tokens: 4096
+    temperature: 0.5
+
+  local:
+    description: "Worker agents and simple tasks (Ollama)"
+    providers:
+      - provider: "ollama"
+        model: "gemma2:9b"
+        priority: 1
+    fallback: null
+    max_tokens: 2048
+    temperature: 0.3
+
+  deterministic:
+    description: "Tool execution — no LLM, direct function calls"
+    providers: []
+    fallback: null
+
+# Routing rules
+routing:
+  # Chief always gets premium
+  chief: "premium"
+  # Department heads get mid-tier
+  department_head: "mid"
+  # Worker agents get local
+  agent: "local"
+  # Tool calls are deterministic
+  tool_execution: "deterministic"
