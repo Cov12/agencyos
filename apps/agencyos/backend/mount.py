@@ -44,4 +44,29 @@ def mount_agencyos(app: FastAPI) -> None:
             "version": "0.1.0",
         }
 
+    # Ensure AgencyOS tables exist (create if missing)
+    try:
+        from open_webui.internal.db import engine, Base
+        from .models.db import (
+            AgencyOSOrganization,
+            AgencyOSMember,
+            AgencyOSDepartment,
+            AgencyOSKnowledge,
+            AgencyOSProposal,
+            AgencyOSAuditLog,
+        )
+        # Create only agencyos_ tables, don't touch OpenWebUI tables
+        agencyos_tables = [
+            AgencyOSOrganization.__table__,
+            AgencyOSMember.__table__,
+            AgencyOSDepartment.__table__,
+            AgencyOSKnowledge.__table__,
+            AgencyOSProposal.__table__,
+            AgencyOSAuditLog.__table__,
+        ]
+        Base.metadata.create_all(bind=engine, tables=agencyos_tables)
+        logger.info("AgencyOS database tables verified/created")
+    except Exception as e:
+        logger.warning(f"AgencyOS table creation skipped: {e}")
+
     logger.info("AgencyOS mounted successfully — 3 routers, tenant middleware active")

@@ -1,18 +1,21 @@
 """
 AgencyOS Department Routes
 
-CRUD for departments + department-scoped chat routing.
+Department listing + department-scoped chat routing.
 """
 
-from fastapi import APIRouter, HTTPException, Depends
+from fastapi import APIRouter, Depends, HTTPException
+from pydantic import BaseModel
 from typing import Optional
+from sqlalchemy.orm import Session
 
-from ..models.department import Department, DepartmentCreate, DepartmentKnowledge
+from open_webui.internal.db import get_session
+from ..models.db import AgencyOSDepartment
 from ..services.orchestrator import Orchestrator
 
 router = APIRouter(prefix="/api/agencyos/departments", tags=["agencyos-departments"])
 
-# Singleton orchestrator (will be dependency-injected properly later)
+# Singleton orchestrator
 _orchestrator = None
 
 
@@ -23,52 +26,71 @@ def get_orchestrator() -> Orchestrator:
     return _orchestrator
 
 
+class ChatRequest(BaseModel):
+    message: str
+    user_id: str
+    chat_id: Optional[str] = None
+
+
 @router.get("/")
 async def list_departments(
     org_id: str,
-    orchestrator: Orchestrator = Depends(get_orchestrator),
+    db: Session = Depends(get_session),
 ):
     """List all departments for an organization."""
-    # TODO: Filter by org_id from database
-    # TODO: Check user permissions
+    departments = db.query(AgencyOSDepartment).filter_by(org_id=org_id, is_active=True).all()
     return {
-        "departments": list(orchestrator.departments.keys()),
-        "org_id": org_id,
+        "departments": [
+            {
+                "id": d.id,
+                "slug": d.slug,
+                "name": d.name,
+                "description": d.description,
+                "model_tier": d.model_tier,
+                "capabilities": d.capabilities,
+            }
+            for d in departments
+        ],
+        "total": len(departments),
     }
 
 
-@router.get("/{department_slug}")
+@router.get("/{department_id}")
 async def get_department(
-    department_slug: str,
+    department_id: str,
     org_id: str,
-    orchestrator: Orchestrator = Depends(get_orchestrator),
+    db: Session = Depends(get_session),
 ):
     """Get department details."""
-    dept = orchestrator.departments.get(department_slug)
+    dept = db.query(AgencyOSDepartment).filter_by(id=department_id, org_id=org_id).first()
     if not dept:
         raise HTTPException(status_code=404, detail="Department not found")
-    return {"department": dept, "slug": department_slug, "org_id": org_id}
+    return {
+        "id": dept.id,
+        "slug": dept.slug,
+        "name": dept.name,
+        "description": dept.description,
+        "model_tier": dept.model_tier,
+        "capabilities": dept.capabilities,
+        "workpipe_modules": dept.workpipe_modules,
+        "system_prompt": dept.system_prompt,
+    }
 
 
 @router.post("/{department_slug}/chat")
 async def department_chat(
     department_slug: str,
     org_id: str,
-    message: str,
-    user_id: str,
-    chat_id: Optional[str] = None,
+    data: ChatRequest,
     orchestrator: Orchestrator = Depends(get_orchestrator),
 ):
-    """
-    Send a message to a department's AI.
-    The orchestrator routes it with proper scoping.
-    """
+    """Send a message to a department's AI."""
     result = await orchestrator.route_message(
-        message=message,
+        message=data.message,
         org_id=org_id,
-        user_id=user_id,
+        user_id=data.user_id,
         department_slug=department_slug,
-        chat_id=chat_id,
+        chat_id=data.chat_id,
     )
     return result
 
@@ -76,20 +98,15 @@ async def department_chat(
 @router.post("/chief/chat")
 async def chief_chat(
     org_id: str,
-    message: str,
-    user_id: str,
-    chat_id: Optional[str] = None,
+    data: ChatRequest,
     orchestrator: Orchestrator = Depends(get_orchestrator),
 ):
-    """
-    Send a message to the Chief AI.
-    Handles cross-department reasoning and delegation.
-    """
+    """Send a message to the Chief AI (cross-department reasoning)."""
     result = await orchestrator.route_message(
-        message=message,
+        message=data.message,
         org_id=org_id,
-        user_id=user_id,
-        department_slug=None,  # Chief handles routing
-        chat_id=chat_id,
+        user_id=data.user_id,
+        department_slug=None,
+        chat_id=data.chat_id,
     )
     return result
