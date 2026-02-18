@@ -30,6 +30,7 @@ class ChatRequest(BaseModel):
     message: str
     user_id: str
     chat_id: Optional[str] = None
+    conversation_history: list[dict] = []  # Previous messages for context
 
 
 @router.get("/")
@@ -82,6 +83,7 @@ async def department_chat(
     department_slug: str,
     org_id: str,
     data: ChatRequest,
+    db: Session = Depends(get_session),
     orchestrator: Orchestrator = Depends(get_orchestrator),
 ):
     """Send a message to a department's AI."""
@@ -91,6 +93,8 @@ async def department_chat(
         user_id=data.user_id,
         department_slug=department_slug,
         chat_id=data.chat_id,
+        db=db,
+        conversation_history=data.conversation_history,
     )
     return result
 
@@ -99,6 +103,7 @@ async def department_chat(
 async def chief_chat(
     org_id: str,
     data: ChatRequest,
+    db: Session = Depends(get_session),
     orchestrator: Orchestrator = Depends(get_orchestrator),
 ):
     """Send a message to the Chief AI (cross-department reasoning)."""
@@ -108,5 +113,7 @@ async def chief_chat(
         user_id=data.user_id,
         department_slug=None,
         chat_id=data.chat_id,
+        db=db,
+        conversation_history=data.conversation_history,
     )
     return result

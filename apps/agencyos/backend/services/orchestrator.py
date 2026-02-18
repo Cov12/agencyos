@@ -13,52 +13,49 @@ Flow:
 6. If cross-department → Chief coordinates between departments
 """
 
+import json
 import logging
 import yaml
 from pathlib import Path
 from typing import Optional
 
-from ..models.department import Department
-from ..models.proposal import ActionProposal, ProposalCreate, ProposalStatus
+from sqlalchemy.orm import Session
+
+from ..models.db import AgencyOSDepartment, AgencyOSKnowledge
 from .model_router import ModelRouter
+from .proposals import ProposalsService
 
 logger = logging.getLogger("agencyos.orchestrator")
 
 CONFIG_DIR = Path(__file__).parent.parent.parent / "config"
 
+# Proposal detection: if the AI response contains this JSON structure,
+# we extract it as a proposal
+PROPOSAL_MARKER = '"action_proposal"'
+
 
 class Orchestrator:
     """
     Central orchestration engine for AgencyOS.
-    
-    Responsibilities:
-    - Route user messages to appropriate department
-    - Enforce department data boundaries
-    - Coordinate cross-department requests via Chief AI
-    - Create action proposals (delegated mode)
-    - Manage conversation context per department
     """
 
     def __init__(self):
         self.model_router = ModelRouter()
-        self.departments = self._load_department_config()
+        self.dept_config = self._load_department_config()
         self.permissions = self._load_permissions()
         logger.info(
-            f"Orchestrator initialized with {len(self.departments)} departments"
+            f"Orchestrator initialized with {len(self.dept_config)} department configs"
         )
 
     def _load_department_config(self) -> dict:
-        """Load department definitions from YAML config."""
         config_path = CONFIG_DIR / "departments.yaml"
         if config_path.exists():
             with open(config_path) as f:
                 config = yaml.safe_load(f)
                 return config.get("departments", {})
-        logger.warning("No departments.yaml found, using defaults")
         return {}
 
     def _load_permissions(self) -> dict:
-        """Load permission matrix from YAML config."""
         config_path = CONFIG_DIR / "permissions.yaml"
         if config_path.exists():
             with open(config_path) as f:
@@ -72,12 +69,11 @@ class Orchestrator:
         user_id: str,
         department_slug: Optional[str] = None,
         chat_id: Optional[str] = None,
+        db: Optional[Session] = None,
+        conversation_history: list[dict] = None,
     ) -> dict:
         """
-        Route an incoming message to the appropriate department.
-        
-        If department_slug is provided, route directly.
-        If None (Chief AI chat), analyze intent and delegate.
+        Route an incoming message to the appropriate department or Chief AI.
         """
         if department_slug:
             return await self._handle_department_message(
@@ -86,6 +82,8 @@ class Orchestrator:
                 user_id=user_id,
                 department_slug=department_slug,
                 chat_id=chat_id,
+                db=db,
+                conversation_history=conversation_history or [],
             )
         else:
             return await self._handle_chief_message(
@@ -93,6 +91,8 @@ class Orchestrator:
                 org_id=org_id,
                 user_id=user_id,
                 chat_id=chat_id,
+                db=db,
+                conversation_history=conversation_history or [],
             )
 
     async def _handle_department_message(
@@ -102,34 +102,52 @@ class Orchestrator:
         user_id: str,
         department_slug: str,
         chat_id: Optional[str] = None,
+        db: Optional[Session] = None,
+        conversation_history: list[dict] = None,
     ) -> dict:
         """Process a message within a specific department's scope."""
-        dept_config = self.departments.get(department_slug)
+        # Get department config (from YAML for now, DB later)
+        dept_config = self.dept_config.get(department_slug)
         if not dept_config:
-            return {"error": f"Unknown department: {department_slug}"}
+            return {"error": f"Unknown department: {department_slug}", "content": ""}
 
-        # Get the right model for this department's tier
         model_tier = dept_config.get("model_tier", "mid")
-        model = self.model_router.get_model(model_tier)
+        system_prompt = self._build_department_prompt(dept_config, org_id)
 
-        # Build department-scoped context
-        system_prompt = self._build_department_prompt(dept_config)
+        # Build message list with conversation history
+        messages = list(conversation_history or [])
+        messages.append({"role": "user", "content": message})
 
-        # TODO: Add RAG retrieval from department knowledge base
-        # TODO: Add WorkPipe module data injection
-        # TODO: Send to model and get response
-        # TODO: Parse response for action proposals
+        # Retrieve department knowledge for RAG context
+        knowledge_context = ""
+        if db:
+            knowledge_context = await self._get_department_knowledge(
+                db, org_id, department_slug, message
+            )
+            if knowledge_context:
+                system_prompt += f"\n\n## Department Knowledge Base\n{knowledge_context}"
 
-        logger.info(
-            f"[{org_id}] Message routed to {department_slug} using {model_tier} tier"
+        # Call the model
+        logger.info(f"[{org_id}] Routing to {department_slug} ({model_tier} tier)")
+        result = await self.model_router.generate(
+            tier=model_tier,
+            messages=messages,
+            system_prompt=system_prompt,
         )
+
+        # Check if the AI wants to propose an action
+        proposals = []
+        if not result.get("error") and PROPOSAL_MARKER in result.get("content", ""):
+            proposals = self._extract_proposals(result["content"], org_id, department_slug, chat_id, db)
 
         return {
             "department": department_slug,
             "model_tier": model_tier,
-            "model": model,
-            "system_prompt": system_prompt,
-            "status": "processed",
+            "model": result.get("model", ""),
+            "content": result.get("content", ""),
+            "proposals": proposals,
+            "usage": result.get("usage", {}),
+            "status": "error" if result.get("error") else "ok",
         }
 
     async def _handle_chief_message(
@@ -138,92 +156,210 @@ class Orchestrator:
         org_id: str,
         user_id: str,
         chat_id: Optional[str] = None,
+        db: Optional[Session] = None,
+        conversation_history: list[dict] = None,
     ) -> dict:
         """
         Chief AI handles cross-department reasoning.
         Analyzes intent, may delegate to one or more departments.
         """
-        model = self.model_router.get_model("premium")
+        system_prompt = self._build_chief_prompt(org_id)
 
-        # TODO: Intent analysis — which department(s) does this touch?
-        # TODO: If single dept → delegate to that dept engine
-        # TODO: If multi-dept → coordinate responses, synthesize
-        # TODO: Strategic summaries and cross-dept insights
+        messages = list(conversation_history or [])
+        messages.append({"role": "user", "content": message})
 
-        logger.info(f"[{org_id}] Chief AI processing cross-department request")
+        logger.info(f"[{org_id}] Chief AI processing request")
+        result = await self.model_router.generate(
+            tier="premium",
+            messages=messages,
+            system_prompt=system_prompt,
+        )
+
+        # Check for delegation instructions in Chief's response
+        # TODO: Parse structured delegation format and route to departments
+
+        proposals = []
+        if not result.get("error") and PROPOSAL_MARKER in result.get("content", ""):
+            proposals = self._extract_proposals(result["content"], org_id, "chief", chat_id, db)
 
         return {
             "department": "chief",
             "model_tier": "premium",
-            "model": model,
-            "status": "processed",
+            "model": result.get("model", ""),
+            "content": result.get("content", ""),
+            "proposals": proposals,
+            "usage": result.get("usage", {}),
+            "status": "error" if result.get("error") else "ok",
         }
 
-    async def create_proposal(
+    def _extract_proposals(
         self,
+        content: str,
         org_id: str,
-        proposal_data: ProposalCreate,
-    ) -> ActionProposal:
+        department_slug: str,
+        chat_id: Optional[str],
+        db: Optional[Session],
+    ) -> list[dict]:
         """
-        Create an action proposal (delegated mode).
-        The AI suggests an action; humans must approve before execution.
+        Extract action proposals from AI response.
+        
+        The AI is instructed to output proposals in a specific JSON format:
+        ```json
+        {"action_proposal": {
+            "title": "...",
+            "description": "...",
+            "action_type": "...",
+            "action_payload": {...},
+            "risk_level": "low|medium|high|critical",
+            "risk_reasoning": "..."
+        }}
+        ```
         """
-        proposal = ActionProposal(
-            org_id=org_id,
-            **proposal_data.model_dump(),
-        )
+        proposals = []
+        try:
+            # Find JSON blocks in the response
+            import re
+            json_blocks = re.findall(r'\{[^{}]*"action_proposal"[^{}]*\{[^}]*\}[^}]*\}', content)
+            
+            for block in json_blocks:
+                try:
+                    parsed = json.loads(block)
+                    proposal_data = parsed.get("action_proposal", {})
+                    if proposal_data and db:
+                        proposal = ProposalsService.create_proposal(
+                            db=db,
+                            org_id=org_id,
+                            department_id=department_slug,
+                            title=proposal_data.get("title", "Untitled Action"),
+                            description=proposal_data.get("description", ""),
+                            action_type=proposal_data.get("action_type", "unknown"),
+                            action_payload=proposal_data.get("action_payload", {}),
+                            risk_level=proposal_data.get("risk_level", "low"),
+                            risk_reasoning=proposal_data.get("risk_reasoning", ""),
+                            created_by_ai=f"agencyos/{department_slug}",
+                            chat_id=chat_id,
+                        )
+                        proposals.append({
+                            "id": proposal.id,
+                            "title": proposal.title,
+                            "action_type": proposal.action_type,
+                            "risk_level": proposal.risk_level,
+                            "status": "pending",
+                        })
+                    elif proposal_data:
+                        # No DB session, return raw proposal data
+                        proposals.append(proposal_data)
+                except json.JSONDecodeError:
+                    continue
+        except Exception as e:
+            logger.warning(f"Failed to extract proposals: {e}")
 
-        # TODO: Persist to database
-        # TODO: Notify relevant approvers
-        # TODO: Add to approval inbox
+        return proposals
 
-        logger.info(
-            f"[{org_id}] Proposal created: {proposal.title} "
-            f"(risk: {proposal.risk_level}, dept: {proposal.department_id})"
-        )
-
-        return proposal
-
-    async def execute_proposal(
+    async def _get_department_knowledge(
         self,
-        proposal: ActionProposal,
-    ) -> dict:
+        db: Session,
+        org_id: str,
+        department_slug: str,
+        query: str,
+    ) -> str:
         """
-        Execute an approved proposal.
-        Only called after human approval.
+        Retrieve relevant knowledge base entries for the department.
+        TODO: Replace with proper vector search (pgvector) once embeddings are set up.
+        For now, returns the most recent knowledge entries.
         """
-        if proposal.status != ProposalStatus.APPROVED:
-            return {"error": "Proposal must be approved before execution"}
+        try:
+            # Get department ID from slug
+            dept = db.query(AgencyOSDepartment).filter_by(
+                org_id=org_id, slug=department_slug
+            ).first()
+            if not dept:
+                return ""
 
-        # TODO: Route to appropriate tool/integration based on action_type
-        # TODO: Connect to WorkPipe API for CRM actions
-        # TODO: Log execution result
-        # TODO: Update proposal status
+            entries = db.query(AgencyOSKnowledge).filter_by(
+                org_id=org_id, department_id=dept.id
+            ).order_by(AgencyOSKnowledge.updated_at.desc()).limit(5).all()
 
-        logger.info(
-            f"[{proposal.org_id}] Executing proposal: {proposal.title}"
-        )
+            if not entries:
+                return ""
 
-        return {"status": "executed", "proposal_id": proposal.id}
+            context_parts = []
+            for entry in entries:
+                context_parts.append(f"### {entry.title}\n{entry.content}")
 
-    def _build_department_prompt(self, dept_config: dict) -> str:
+            return "\n\n".join(context_parts)
+        except Exception as e:
+            logger.warning(f"Knowledge retrieval failed: {e}")
+            return ""
+
+    def _build_department_prompt(self, dept_config: dict, org_id: str) -> str:
         """Build a system prompt scoped to a department's role and capabilities."""
         name = dept_config.get("name", "Department")
         description = dept_config.get("description", "")
         capabilities = dept_config.get("capabilities", [])
 
-        prompt = f"""You are the {name} AI for this organization.
+        return f"""You are the {name} AI department head for this organization.
 
-Role: {description}
+## Your Role
+{description}
 
-Your capabilities:
-{chr(10).join(f'- {cap}' for cap in capabilities)}
+## Your Capabilities
+{chr(10).join(f'- {cap.replace("_", " ").title()}' for cap in capabilities)}
 
-IMPORTANT RULES:
-1. You can ONLY access data within your department's scope.
-2. You CANNOT directly execute actions. All actions must be submitted as proposals.
-3. If a request involves another department, escalate to the Chief AI.
+## Rules (STRICT)
+1. You can ONLY access data within your department's scope. Never reference other departments' data.
+2. You CANNOT directly execute actions. If you need to take action (send email, update record, etc.), 
+   output a structured proposal in this exact JSON format:
+   ```json
+   {{"action_proposal": {{
+       "title": "Brief action title",
+       "description": "What this action does and why",
+       "action_type": "send_email|update_contact|create_task|update_pipeline|etc",
+       "action_payload": {{"key": "value"}},
+       "risk_level": "low|medium|high|critical",
+       "risk_reasoning": "Why this risk level"
+   }}}}
+   ```
+3. If a request involves another department, say so and suggest the user ask the Chief AI.
 4. Always explain your reasoning before proposing actions.
-5. Assess risk level for every proposal (low/medium/high/critical).
-"""
-        return prompt
+5. Be concise but thorough. You're a department head, not a chatbot.
+
+## Response Format
+- Answer the user's question directly
+- If an action is needed, include the proposal JSON block in your response
+- Multiple proposals can be included if multiple actions are needed"""
+
+    def _build_chief_prompt(self, org_id: str) -> str:
+        """Build the Chief AI's system prompt."""
+        dept_names = [d.get("name", k) for k, d in self.dept_config.items() if k != "chief"]
+
+        return f"""You are the Chief AI — the executive intelligence layer for this organization.
+
+## Your Role
+Cross-department reasoning, strategic summaries, and delegation across departments.
+
+## Available Departments
+{chr(10).join(f'- {name}' for name in dept_names)}
+
+## Rules (STRICT)
+1. You coordinate across departments but do NOT bypass the approval model.
+2. For actions, output proposals in the same JSON format as department heads:
+   ```json
+   {{"action_proposal": {{
+       "title": "...",
+       "description": "...",
+       "action_type": "...",
+       "action_payload": {{}},
+       "risk_level": "low|medium|high|critical",
+       "risk_reasoning": "..."
+   }}}}
+   ```
+3. When a request belongs to a specific department, indicate which one.
+4. Provide strategic context — you see the big picture.
+5. Summarize cross-department impacts when relevant.
+
+## Response Format
+- Analyze the request and identify which department(s) it touches
+- Provide your executive perspective
+- If delegation is needed, indicate the target department
+- Include action proposals when actions are needed"""
