@@ -21,6 +21,12 @@ export default {
 					850: 'var(--color-gray-850, #262626)',
 					900: 'var(--color-gray-900, #171717)',
 					950: 'var(--color-gray-950, #0d0d0d)'
+				},
+				'aos-bg': '#0f0f13',
+				'aos-surface': '#1c1c21',
+				'aos-primary': '#6961ff',
+				'aos-accent': '#20B2AA',
+				'aos-primary-hover': '#5851d8'
 				}
 			},
 			typography: {

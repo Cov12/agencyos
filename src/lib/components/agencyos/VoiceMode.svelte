@@ -1,199 +1,82 @@
 <script lang="ts">
-	import { onDestroy, createEventDispatcher } from 'svelte';
+	import { goto } from '$app/navigation';
 
-	const dispatch = createEventDispatcher();
+	let isListening = true;
+	let statusText = 'Listening to your request...';
+	let subtitle = "Go ahead, I'm ready for your command.";
 
-	export let disabled = false;
-
-	type VoiceState = 'idle' | 'listening' | 'thinking' | 'speaking';
-	let state: VoiceState = 'idle';
-
-	let mediaRecorder: MediaRecorder | null = null;
-	let audioChunks: Blob[] = [];
-	let analyserNode: AnalyserNode | null = null;
-	let animationFrame: number | null = null;
-	let canvas: HTMLCanvasElement;
-	let audioLevel = 0;
-
-	const STATE_LABELS: Record<VoiceState, string> = {
-		idle: 'Tap to speak',
-		listening: 'Listening...',
-		thinking: 'Thinking...',
-		speaking: 'Speaking...'
-	};
-
-	async function startListening() {
-		if (disabled || state !== 'idle') return;
-
-		try {
-			const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
-
-			// Set up audio analyser for visual feedback
-			const audioCtx = new AudioContext();
-			const source = audioCtx.createMediaStreamSource(stream);
-			analyserNode = audioCtx.createAnalyser();
-			analyserNode.fftSize = 256;
-			source.connect(analyserNode);
-
-			// Set up recorder
-			mediaRecorder = new MediaRecorder(stream);
-			audioChunks = [];
-
-			mediaRecorder.ondataavailable = (e) => {
-				if (e.data.size > 0) audioChunks.push(e.data);
-			};
-
-			mediaRecorder.onstop = () => {
-				const audioBlob = new Blob(audioChunks, { type: 'audio/webm' });
-				stream.getTracks().forEach((t) => t.stop());
-				cancelAnimationFrame(animationFrame!);
-				analyserNode = null;
-
-				state = 'thinking';
-				dispatch('audio', { blob: audioBlob });
-			};
-
-			mediaRecorder.start();
-			state = 'listening';
-			drawWaveform();
-		} catch (err) {
-			console.error('Microphone access denied:', err);
-			state = 'idle';
-		}
+	function dismiss() {
+		goto('/agencyos');
 	}
 
-	function stopListening() {
-		if (state === 'listening' && mediaRecorder?.state === 'recording') {
-			mediaRecorder.stop();
-		}
+	function handleKeydown(e: KeyboardEvent) {
+		if (e.key === 'Escape') dismiss();
 	}
-
-	function drawWaveform() {
-		if (!analyserNode || !canvas) return;
-
-		const ctx = canvas.getContext('2d');
-		if (!ctx) return;
-
-		const bufferLength = analyserNode.frequencyBinCount;
-		const dataArray = new Uint8Array(bufferLength);
-
-		function draw() {
-			if (!analyserNode) return;
-			animationFrame = requestAnimationFrame(draw);
-
-			analyserNode.getByteTimeDomainData(dataArray);
-
-			// Calculate audio level (0-1)
-			let sum = 0;
-			for (let i = 0; i < bufferLength; i++) {
-				const v = (dataArray[i] - 128) / 128;
-				sum += v * v;
-			}
-			audioLevel = Math.sqrt(sum / bufferLength);
-		}
-
-		draw();
-	}
-
-	/** Called by parent when TTS audio starts playing */
-	export function setSpeaking() {
-		state = 'speaking';
-	}
-
-	/** Called by parent when TTS audio finishes */
-	export function setIdle() {
-		state = 'idle';
-	}
-
-	/** Called by parent when processing starts */
-	export function setThinking() {
-		state = 'thinking';
-	}
-
-	function handleClick() {
-		if (state === 'idle') {
-			startListening();
-		} else if (state === 'listening') {
-			stopListening();
-		}
-	}
-
-	onDestroy(() => {
-		if (mediaRecorder?.state === 'recording') {
-			mediaRecorder.stop();
-		}
-		if (animationFrame) {
-			cancelAnimationFrame(animationFrame);
-		}
-	});
-
-	$: pulseScale = state === 'listening' ? 1 + audioLevel * 0.4 : 1;
 </script>
 
-<div class="flex flex-col items-center gap-2">
-	<!-- Main Button -->
-	<button
-		class="relative flex h-14 w-14 items-center justify-center rounded-full transition-all duration-200
-			{state === 'idle' ? 'bg-gray-100 hover:bg-gray-200 dark:bg-gray-800 dark:hover:bg-gray-700' : ''}
-			{state === 'listening' ? 'bg-red-500 text-white shadow-lg shadow-red-500/30' : ''}
-			{state === 'thinking' ? 'bg-blue-500 text-white' : ''}
-			{state === 'speaking' ? 'bg-green-500 text-white' : ''}"
-		{disabled}
-		on:click={handleClick}
-	>
-		<!-- Pulse ring for listening state -->
-		{#if state === 'listening'}
-			<div
-				class="absolute inset-0 rounded-full bg-red-500/30"
-				style="transform: scale({pulseScale}); transition: transform 100ms ease-out;"
-			/>
-		{/if}
+<svelte:window on:keydown={handleKeydown} />
 
-		<!-- Icon -->
-		{#if state === 'idle'}
-			<!-- Mic icon -->
-			<svg class="h-6 w-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-				<path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
-					d="M19 11a7 7 0 01-7 7m0 0a7 7 0 01-7-7m7 7v4m0 0H8m4 0h4M12 15a3 3 0 003-3V5a3 3 0 00-6 0v7a3 3 0 003 3z" />
-			</svg>
-		{:else if state === 'listening'}
-			<!-- Stop icon -->
-			<svg class="relative z-10 h-6 w-6" fill="currentColor" viewBox="0 0 24 24">
-				<rect x="6" y="6" width="12" height="12" rx="2" />
-			</svg>
-		{:else if state === 'thinking'}
-			<!-- Spinner -->
-			<div class="h-6 w-6 animate-spin rounded-full border-2 border-white/30 border-t-white" />
-		{:else if state === 'speaking'}
-			<!-- Waveform bars -->
-			<div class="flex items-center gap-0.5">
-				{#each [1, 2, 3, 4, 5] as bar}
-					<div
-						class="w-1 rounded-full bg-white"
-						style="height: {8 + Math.random() * 12}px; animation: waveform 0.5s ease-in-out infinite alternate;
-							animation-delay: {bar * 0.1}s;"
-					/>
-				{/each}
+<div class="absolute inset-0 z-50 flex flex-col items-center justify-center bg-black/40 backdrop-blur-xl">
+	<div class="flex flex-col items-center justify-center w-full max-w-2xl relative">
+		<!-- Orb -->
+		<div class="relative flex items-center justify-center size-[300px] mb-12">
+			<div class="absolute inset-0 rounded-full bg-[#20B2AA]/20 blur-[80px] animate-pulse"></div>
+			<div class="absolute size-full rounded-full border border-[#20B2AA]/30 animate-[wave_2s_linear_infinite] opacity-0"></div>
+			<div class="absolute size-full rounded-full border border-[#20B2AA]/20 animate-[wave_2s_linear_infinite] opacity-0" style="animation-delay: 0.8s"></div>
+			<div class="relative size-48 rounded-full orb-core animate-[orb-breathe_4s_ease-in-out_infinite] backdrop-blur-md flex items-center justify-center border border-white/10">
+				<div class="absolute top-4 left-6 size-16 bg-gradient-to-br from-white/30 to-transparent rounded-full blur-xl transform -rotate-45"></div>
+				<span class="material-symbols-outlined text-white/50 text-6xl drop-shadow-[0_0_15px_rgba(255,255,255,0.5)]">graphic_eq</span>
 			</div>
-		{/if}
-	</button>
+		</div>
 
-	<!-- State label -->
-	<span class="text-xs text-gray-500 dark:text-gray-400">
-		{STATE_LABELS[state]}
-	</span>
+		<!-- Status -->
+		<div class="flex flex-col items-center gap-3 text-center z-10">
+			<h1 class="text-white text-3xl md:text-4xl font-semibold tracking-tight drop-shadow-xl">{statusText}</h1>
+			<p class="text-slate-300 text-lg font-light tracking-wide max-w-md">{subtitle}</p>
+		</div>
 
-	<!-- Hidden canvas for audio analysis -->
-	<canvas bind:this={canvas} class="hidden" width="0" height="0" />
+		<!-- Waveform -->
+		<div class="h-12 flex items-center gap-1 mt-8 opacity-60">
+			{#each [3, 6, 4, 8, 4, 6, 3] as h, i}
+				<div class="w-1 bg-[#20B2AA] rounded-full animate-pulse" style="height: {h * 4}px; animation-duration: {0.8 + i * 0.2}s"></div>
+			{/each}
+		</div>
+	</div>
+
+	<!-- Controls -->
+	<div class="absolute bottom-12 flex items-center gap-4">
+		<button class="group flex items-center justify-center size-12 rounded-full glass-panel hover:bg-white/10 transition-all text-slate-300 hover:text-white">
+			<span class="material-symbols-outlined transition-transform group-hover:rotate-45">settings</span>
+		</button>
+		<button class="group flex items-center gap-2 pl-4 pr-5 h-12 rounded-full glass-panel hover:bg-white/10 transition-all border border-white/10 hover:border-white/20" on:click={dismiss}>
+			<div class="size-6 bg-slate-800 rounded-full flex items-center justify-center group-hover:bg-slate-700 transition-colors">
+				<span class="material-symbols-outlined text-[16px] text-white">close</span>
+			</div>
+			<span class="text-white text-sm font-semibold tracking-wide">Dismiss</span>
+		</button>
+		<div class="absolute -bottom-8 left-1/2 -translate-x-1/2 whitespace-nowrap">
+			<span class="text-white/30 text-xs font-mono">Press ESC to close</span>
+		</div>
+	</div>
 </div>
 
 <style>
-	@keyframes waveform {
-		from {
-			height: 6px;
-		}
-		to {
-			height: 18px;
-		}
+	.glass-panel {
+		background: rgba(17, 33, 32, 0.4);
+		backdrop-filter: blur(12px);
+		-webkit-backdrop-filter: blur(12px);
+		border: 1px solid rgba(255, 255, 255, 0.1);
+	}
+	.orb-core {
+		background: radial-gradient(circle at 30% 30%, rgba(32, 178, 170, 0.8), rgba(32, 178, 170, 0.2));
+		box-shadow: 0 0 60px rgba(32, 178, 170, 0.4), inset 0 0 40px rgba(255, 255, 255, 0.2);
+	}
+	@keyframes orb-breathe {
+		0%, 100% { transform: scale(1); opacity: 0.8; }
+		50% { transform: scale(1.05); opacity: 1; }
+	}
+	@keyframes wave {
+		0% { transform: scale(1); opacity: 0.5; }
+		100% { transform: scale(2); opacity: 0; }
 	}
 </style>
