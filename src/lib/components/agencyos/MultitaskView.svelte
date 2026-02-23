@@ -1,4 +1,5 @@
 <script lang="ts">
+	import { activeDept, departments, proposals } from '$lib/stores/agencyos';
 	import GlassPanel from '$lib/components/agencyos/shared/GlassPanel.svelte';
 	import MaterialIcon from '$lib/components/agencyos/shared/MaterialIcon.svelte';
 	import StatusBadge from '$lib/components/agencyos/shared/StatusBadge.svelte';
@@ -12,18 +13,21 @@
 		orange: { badge: 'bg-orange-500/10 text-orange-400', bar: 'bg-gradient-to-r from-orange-500 to-orange-400' },
 	};
 
-	const kpis = [
-		{ label: 'Total Revenue', value: '$48,290', change: '+12.5%', color: 'green', pct: 75 },
-		{ label: 'Active Users', value: '12,402', change: '+5.2%', color: 'indigo', pct: 45 },
-		{ label: 'Tasks Completed', value: '892', change: '-1.2%', color: 'orange', pct: 60 },
+	$: approvedCount = $proposals.filter(p => p.status === 'approved').length;
+	$: pendingCount = $proposals.filter(p => p.status === 'pending').length;
+
+	$: kpis = [
+		{ label: 'Proposals', value: String($proposals.length), change: `${pendingCount} pending`, color: 'green', pct: $proposals.length > 0 ? (approvedCount / $proposals.length) * 100 : 0 },
+		{ label: 'Departments', value: String($departments.length), change: `${$departments.filter(d => d.status === 'active').length} active`, color: 'indigo', pct: ($departments.filter(d => d.status === 'active').length / Math.max($departments.length, 1)) * 100 },
+		{ label: 'Agents Online', value: String($departments.reduce((a, d) => a + d.agentCount, 0)), change: 'All systems', color: 'orange', pct: 60 },
 	];
+
+	$: contextDept = $activeDept?.name ?? 'AgencyOS';
 </script>
 
 <div class="w-full h-full flex gap-4 p-4 md:p-6 overflow-hidden">
 	<!-- Left: Chat -->
-	<section class="flex-1 rounded-2xl flex flex-col shadow-2xl overflow-hidden"
-		style="background: rgba(30, 30, 36, 0.75); backdrop-filter: blur(12px); border: 1px solid rgba(255, 255, 255, 0.08);"
-	>
+	<GlassPanel class="flex-1 flex flex-col shadow-2xl overflow-hidden" opacity={0.75} blur={12} borderOpacity={0.08} rounded="rounded-2xl">
 		<div class="h-12 bg-[#2b2839]/50 border-b border-white/5 flex items-center justify-between px-4 shrink-0">
 			<div class="flex items-center gap-2">
 				<div class="w-3 h-3 rounded-full bg-[#FF5F57]"></div>
@@ -32,7 +36,7 @@
 			</div>
 			<div class="flex items-center gap-2 opacity-70">
 				<MaterialIcon icon="smart_toy" size={14} />
-				<span class="text-xs font-semibold tracking-wide text-white">AgencyGPT</span>
+				<span class="text-xs font-semibold tracking-wide text-white">{contextDept}</span>
 			</div>
 			<div class="w-10"></div>
 		</div>
@@ -49,7 +53,7 @@
 				</div>
 				<div class="space-y-1">
 					<div class="flex items-baseline gap-2">
-						<span class="text-sm font-semibold text-white">AgencyGPT</span>
+						<span class="text-sm font-semibold text-white">{contextDept} Agent</span>
 						<span class="text-xs text-slate-500">10:30 AM</span>
 					</div>
 					<div class="bg-[#2b2839] p-4 rounded-2xl rounded-tl-none text-sm text-slate-200 leading-relaxed border border-white/5">
@@ -91,13 +95,13 @@
 				<button class="absolute left-3 text-slate-400 hover:text-white transition-colors">
 					<MaterialIcon icon="add_circle" />
 				</button>
-				<input bind:value={chatInput} class="w-full bg-[#1e1e24]/80 text-white placeholder-slate-500 rounded-xl py-3 pl-10 pr-12 focus:outline-none focus:ring-2 focus:ring-[#6961ff]/50 border border-white/5 text-sm" placeholder="Message AgencyGPT..." />
+				<input bind:value={chatInput} class="w-full bg-[#1e1e24]/80 text-white placeholder-slate-500 rounded-xl py-3 pl-10 pr-12 focus:outline-none focus:ring-2 focus:ring-[#6961ff]/50 border border-white/5 text-sm" placeholder="Message {contextDept}..." />
 				<button class="absolute right-2 p-1.5 bg-[#3713ec] hover:bg-[#3713ec]/80 text-white rounded-lg transition-colors shadow-lg">
 					<MaterialIcon icon="arrow_upward" size={18} />
 				</button>
 			</div>
 		</div>
-	</section>
+	</GlassPanel>
 
 	<!-- Divider -->
 	<div class="w-2 flex flex-col justify-center items-center cursor-col-resize group hover:w-3 transition-all">
@@ -105,9 +109,7 @@
 	</div>
 
 	<!-- Right: Analytics -->
-	<section class="flex-1 rounded-2xl flex flex-col shadow-2xl overflow-hidden"
-		style="background: rgba(30, 30, 36, 0.75); backdrop-filter: blur(12px); border: 1px solid rgba(255, 255, 255, 0.08);"
-	>
+	<GlassPanel class="flex-1 flex flex-col shadow-2xl overflow-hidden" opacity={0.75} blur={12} borderOpacity={0.08} rounded="rounded-2xl">
 		<div class="h-12 bg-[#2b2839]/50 border-b border-white/5 flex items-center justify-between px-4 shrink-0">
 			<div class="flex items-center gap-2">
 				<div class="w-3 h-3 rounded-full bg-[#FF5F57] opacity-50"></div>
@@ -163,34 +165,27 @@
 				</div>
 			</div>
 
-			<!-- Transactions -->
+			<!-- Recent Proposals -->
 			<div class="space-y-3">
-				<h4 class="text-sm font-semibold text-white px-1">Recent Transactions</h4>
-				<div class="bg-[#2b2839] rounded-xl border border-white/5 p-3 flex items-center justify-between hover:bg-white/5 transition-colors cursor-pointer">
-					<div class="flex items-center gap-3">
-						<div class="w-8 h-8 rounded-full bg-blue-500/10 flex items-center justify-center">
-							<MaterialIcon icon="payments" size={16} class="text-blue-400" />
+				<h4 class="text-sm font-semibold text-white px-1">Recent Activity</h4>
+				{#each $proposals.slice(0, 3) as proposal}
+					<div class="bg-[#2b2839] rounded-xl border border-white/5 p-3 flex items-center justify-between hover:bg-white/5 transition-colors cursor-pointer">
+						<div class="flex items-center gap-3">
+							<div class="w-8 h-8 rounded-full bg-[#6961ff]/10 flex items-center justify-center">
+								<MaterialIcon icon="task_alt" size={16} class="text-[#6961ff]" />
+							</div>
+							<div class="flex flex-col">
+								<span class="text-xs font-medium text-white">{proposal.title}</span>
+								<span class="text-[10px] text-slate-500">{proposal.dept} · {proposal.createdAt}</span>
+							</div>
 						</div>
-						<div class="flex flex-col">
-							<span class="text-xs font-medium text-white">Stripe Payout</span>
-							<span class="text-[10px] text-slate-500">Today, 9:42 AM</span>
-						</div>
+						<StatusBadge label={proposal.status} color={proposal.status === 'approved' ? 'green' : proposal.status === 'pending' ? 'yellow' : 'red'} />
 					</div>
-					<span class="text-xs font-medium text-green-400">+$1,250.00</span>
-				</div>
-				<div class="bg-[#2b2839] rounded-xl border border-white/5 p-3 flex items-center justify-between hover:bg-white/5 transition-colors cursor-pointer">
-					<div class="flex items-center gap-3">
-						<div class="w-8 h-8 rounded-full bg-purple-500/10 flex items-center justify-center">
-							<MaterialIcon icon="cloud_upload" size={16} class="text-purple-400" />
-						</div>
-						<div class="flex flex-col">
-							<span class="text-xs font-medium text-white">AWS Invoice</span>
-							<span class="text-[10px] text-slate-500">Yesterday, 4:20 PM</span>
-						</div>
-					</div>
-					<span class="text-xs font-medium text-slate-300">-$240.00</span>
-				</div>
+				{/each}
+				{#if $proposals.length === 0}
+					<div class="text-sm text-slate-500 text-center py-4">No recent activity</div>
+				{/if}
 			</div>
 		</div>
-	</section>
+	</GlassPanel>
 </div>

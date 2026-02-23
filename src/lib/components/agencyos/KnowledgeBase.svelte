@@ -1,37 +1,35 @@
 <script lang="ts">
+	import { departments } from '$lib/stores/agencyos';
+	import GlassPanel from '$lib/components/agencyos/shared/GlassPanel.svelte';
 	import MaterialIcon from '$lib/components/agencyos/shared/MaterialIcon.svelte';
 	import StatusBadge from '$lib/components/agencyos/shared/StatusBadge.svelte';
 
-	const stats = [
-		{ label: 'Total Documents', value: '12,450', change: '12%', icon: 'description', iconBg: 'bg-blue-900/20', iconColor: 'text-blue-500' },
-		{ label: 'Indexing Status', value: '98.2%', progress: 98.2, icon: 'check_circle', iconBg: 'bg-[#20B2AA]/10', iconColor: 'text-[#20B2AA]' },
-		{ label: 'Active Silos', value: '8', icon: 'dns', iconBg: 'bg-purple-900/20', iconColor: 'text-purple-500' },
-		{ label: 'Queries Today', value: '3,402', icon: 'query_stats', iconBg: 'bg-orange-900/20', iconColor: 'text-orange-500' },
+	// Derive silos from departments store
+	$: silos = $departments.map(dept => ({
+		name: `${dept.name} Silo`,
+		desc: `Knowledge base for ${dept.description.toLowerCase()}.`,
+		docs: `${Math.floor(Math.random() * 500 + 50)} documents`,
+		status: dept.status === 'active' ? 'Live Sync' : 'Pending Setup',
+		statusColor: dept.status === 'active' ? 'green' : 'yellow',
+		icon: dept.icon,
+		gradient: dept.gradient,
+	}));
+
+	$: stats = [
+		{ label: 'Total Documents', value: '—', change: '—', icon: 'description', iconBg: 'bg-blue-900/20', iconColor: 'text-blue-500' },
+		{ label: 'Active Silos', value: String($departments.filter(d => d.status === 'active').length), icon: 'dns', iconBg: 'bg-purple-900/20', iconColor: 'text-purple-500' },
+		{ label: 'Total Departments', value: String($departments.length), icon: 'domain', iconBg: 'bg-orange-900/20', iconColor: 'text-orange-500' },
 	];
 
-	interface Silo {
-		name: string;
-		desc: string;
-		docs: string;
-		status: string;
-		statusColor: string;
-		icon: string;
-		gradient: string;
-	}
-
-	const silos: Silo[] = [
-		{ name: 'Sales Data Silo', desc: 'Contracts, negotiation transcripts, and CRM exports synced daily.', docs: '245 documents', status: 'Live Sync', statusColor: 'green', icon: 'folder_shared', gradient: 'from-blue-500 to-blue-600' },
-		{ name: 'Customer Silo', desc: 'Support tickets, Zendesk archives, and user feedback loops.', docs: '8,902 documents', status: 'Indexing...', statusColor: 'cyan', icon: 'support_agent', gradient: 'from-pink-400 to-pink-600' },
-		{ name: 'Product Specs', desc: 'Technical documentation, API references, and architecture diagrams.', docs: '1,024 documents', status: 'Static', statusColor: 'purple', icon: 'architecture', gradient: 'from-emerald-400 to-emerald-600' },
-		{ name: 'Legal & Compliance', desc: 'GDPR policies, employee handbooks, and compliance audits.', docs: '56 documents', status: 'Live Sync', statusColor: 'green', icon: 'gavel', gradient: 'from-amber-400 to-amber-600' },
-	];
+	let activeFilter = 'All Knowledge';
 
 	const sidebarItems = [
-		{ label: 'All Knowledge', icon: 'folder_open', active: true, count: 12 },
-		{ label: 'Shared', icon: 'group', active: false },
-		{ label: 'Sales Silo', icon: 'bar_chart', active: false },
-		{ label: 'Customer Silo', icon: 'face', active: false },
+		{ label: 'All Knowledge', icon: 'folder_open' },
+		{ label: 'Shared', icon: 'group' },
 	];
+
+	$: deptSidebarItems = $departments.map(d => ({ label: `${d.name} Silo`, icon: d.icon }));
+	$: allSidebarItems = [...sidebarItems, ...deptSidebarItems];
 </script>
 
 <div class="w-full h-full flex overflow-hidden">
@@ -49,19 +47,20 @@
 				<div class="px-3 py-1 mb-2">
 					<h2 class="text-xs font-semibold text-slate-400 uppercase tracking-wider">Library</h2>
 				</div>
-				{#each sidebarItems as item}
-					<button class="flex items-center gap-3 px-3 py-2 rounded-lg transition-all {item.active ? 'bg-white/5 shadow-sm border border-white/5' : 'hover:bg-white/5 border border-transparent'}">
-						<MaterialIcon icon={item.icon} size={20} class="{item.active ? 'text-[#20B2AA]' : 'text-slate-500'}" />
-						<span class="text-sm font-medium {item.active ? 'text-slate-100' : 'text-slate-400'}">{item.label}</span>
-						{#if item.count}
-							<span class="ml-auto text-xs font-medium text-slate-400">{item.count}</span>
-						{/if}
+				{#each allSidebarItems as item}
+					{@const isActive = item.label === activeFilter}
+					<button
+						class="flex items-center gap-3 px-3 py-2 rounded-lg transition-all w-full text-left {isActive ? 'bg-white/5 shadow-sm border border-white/5' : 'hover:bg-white/5 border border-transparent'}"
+						on:click={() => activeFilter = item.label}
+					>
+						<MaterialIcon icon={item.icon} size={20} class="{isActive ? 'text-[#20B2AA]' : 'text-slate-500'}" />
+						<span class="text-sm font-medium {isActive ? 'text-slate-100' : 'text-slate-400'}">{item.label}</span>
 					</button>
 				{/each}
 			</div>
 		</div>
 		<div class="p-4">
-			<div class="bg-slate-800 rounded-xl p-4 border border-white/10">
+			<GlassPanel class="p-4" opacity={0.4}>
 				<div class="flex items-center gap-2 mb-2">
 					<MaterialIcon icon="cloud_sync" size={18} class="text-[#20B2AA]" />
 					<span class="text-xs font-bold text-slate-200">Storage Used</span>
@@ -73,7 +72,7 @@
 					<span>45 GB</span>
 					<span>60 GB Limit</span>
 				</div>
-			</div>
+			</GlassPanel>
 		</div>
 	</div>
 
@@ -104,7 +103,7 @@
 			</div>
 
 			<!-- Stats -->
-			<div class="grid grid-cols-4 gap-6 mb-10">
+			<div class="grid grid-cols-1 sm:grid-cols-3 gap-6 mb-10">
 				{#each stats as stat}
 					<div class="bg-[#1a2c2b] p-5 rounded-2xl border border-white/5 flex flex-col justify-between h-32">
 						<div class="flex items-center justify-between">
@@ -115,18 +114,9 @@
 						</div>
 						<div>
 							<span class="text-3xl font-bold text-white tracking-tight">{stat.value}</span>
-							{#if stat.progress}
-								<div class="w-full bg-slate-700 h-1.5 rounded-full mt-2">
-									<div class="bg-[#20B2AA] h-1.5 rounded-full" style="width: {stat.progress}%"></div>
-								</div>
-							{/if}
 							{#if stat.change}
 								<div class="flex items-center gap-1 mt-1">
-									<span class="text-xs text-green-600 font-medium flex items-center">
-										<MaterialIcon icon="arrow_upward" size={14} />
-										{stat.change}
-									</span>
-									<span class="text-xs text-slate-400">vs last month</span>
+									<span class="text-xs text-slate-400">{stat.change}</span>
 								</div>
 							{/if}
 						</div>

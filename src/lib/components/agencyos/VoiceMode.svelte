@@ -1,9 +1,14 @@
 <script lang="ts">
 	import { goto } from '$app/navigation';
+	import { activeDept } from '$lib/stores/agencyos';
+	import MaterialIcon from '$lib/components/agencyos/shared/MaterialIcon.svelte';
+	import GlassPanel from '$lib/components/agencyos/shared/GlassPanel.svelte';
 
 	let isListening = true;
-	let statusText = 'Listening to your request...';
-	let subtitle = "Go ahead, I'm ready for your command.";
+
+	$: deptName = $activeDept?.name ?? 'AgencyOS';
+	$: statusText = `Listening to your request...`;
+	$: subtitle = `Connected to ${deptName}. Go ahead, I'm ready.`;
 
 	function dismiss() {
 		goto('/agencyos');
@@ -25,7 +30,7 @@
 			<div class="absolute size-full rounded-full border border-[#20B2AA]/20 animate-[wave_2s_linear_infinite] opacity-0" style="animation-delay: 0.8s"></div>
 			<div class="relative size-48 rounded-full orb-core animate-[orb-breathe_4s_ease-in-out_infinite] backdrop-blur-md flex items-center justify-center border border-white/10">
 				<div class="absolute top-4 left-6 size-16 bg-gradient-to-br from-white/30 to-transparent rounded-full blur-xl transform -rotate-45"></div>
-				<span class="material-symbols-outlined text-white/50 text-6xl drop-shadow-[0_0_15px_rgba(255,255,255,0.5)]">graphic_eq</span>
+				<MaterialIcon icon="graphic_eq" size={64} class="text-white/50 drop-shadow-[0_0_15px_rgba(255,255,255,0.5)]" />
 			</div>
 		</div>
 
@@ -45,12 +50,12 @@
 
 	<!-- Controls -->
 	<div class="absolute bottom-12 flex items-center gap-4">
-		<button class="group flex items-center justify-center size-12 rounded-full glass-panel hover:bg-white/10 transition-all text-slate-300 hover:text-white">
-			<span class="material-symbols-outlined transition-transform group-hover:rotate-45">settings</span>
+		<button class="group flex items-center justify-center size-12 rounded-full hover:bg-white/10 transition-all text-slate-300 hover:text-white bg-white/5 backdrop-blur-md border border-white/10">
+			<MaterialIcon icon="settings" class="transition-transform group-hover:rotate-45" />
 		</button>
-		<button class="group flex items-center gap-2 pl-4 pr-5 h-12 rounded-full glass-panel hover:bg-white/10 transition-all border border-white/10 hover:border-white/20" on:click={dismiss}>
+		<button class="group flex items-center gap-2 pl-4 pr-5 h-12 rounded-full hover:bg-white/10 transition-all border border-white/10 hover:border-white/20 bg-white/5 backdrop-blur-md" on:click={dismiss}>
 			<div class="size-6 bg-slate-800 rounded-full flex items-center justify-center group-hover:bg-slate-700 transition-colors">
-				<span class="material-symbols-outlined text-[16px] text-white">close</span>
+				<MaterialIcon icon="close" size={16} class="text-white" />
 			</div>
 			<span class="text-white text-sm font-semibold tracking-wide">Dismiss</span>
 		</button>
@@ -61,12 +66,6 @@
 </div>
 
 <style>
-	.glass-panel {
-		background: rgba(17, 33, 32, 0.4);
-		backdrop-filter: blur(12px);
-		-webkit-backdrop-filter: blur(12px);
-		border: 1px solid rgba(255, 255, 255, 0.1);
-	}
 	.orb-core {
 		background: radial-gradient(circle at 30% 30%, rgba(32, 178, 170, 0.8), rgba(32, 178, 170, 0.2));
 		box-shadow: 0 0 60px rgba(32, 178, 170, 0.4), inset 0 0 40px rgba(255, 255, 255, 0.2);

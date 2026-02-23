@@ -1,18 +1,24 @@
 <script lang="ts">
-	let orgName = 'AgencyOS Global';
-	let domain = 'agencyos.ai/global';
+	import { departments } from '$lib/stores/agencyos';
+	import GlassPanel from '$lib/components/agencyos/shared/GlassPanel.svelte';
+	import MaterialIcon from '$lib/components/agencyos/shared/MaterialIcon.svelte';
 
+	let orgName = 'AgencyOS';
+	let domain = 'agencyos.app';
+
+	// Team members (will be store-driven when user management is added)
 	const team = [
-		{ initials: 'SA', name: 'Sarah Anders', email: 'sarah@agencyos.ai', role: 'OWNER', roleStyle: 'bg-[#6961ff]/10 text-[#6961ff] border-[#6961ff]/20', lastActive: 'Just now', gradient: true },
-		{ initials: '', name: 'Julian Chen', email: 'jchen@agencyos.ai', role: 'ADMIN', roleStyle: 'bg-slate-100/10 text-slate-100 border-white/10', lastActive: '2 hours ago' },
-		{ initials: 'MM', name: 'Marco Mendez', email: 'marco@agencyos.ai', role: 'MEMBER', roleStyle: 'bg-[#20B2AA]/10 text-[#20B2AA] border-[#20B2AA]/20', lastActive: 'Yesterday' },
+		{ initials: 'CO', name: 'Cov', email: 'cov@wbit.agency', role: 'OWNER', roleStyle: 'bg-[#6961ff]/10 text-[#6961ff] border-[#6961ff]/20', lastActive: 'Just now', gradient: true },
 	];
 
 	const integrations = [
-		{ name: 'Discord', desc: 'Community & Bot Hub', enabled: true, bg: 'bg-[#5865F2]/10' },
-		{ name: 'Notion', desc: 'Knowledge Base Sync', enabled: true, bg: 'bg-black' },
-		{ name: 'GitHub', desc: 'Codebase Automation', enabled: false, bg: 'bg-[#24292E]/20' },
+		{ name: 'WorkPipe', desc: 'CRM & Pipeline', enabled: true, icon: 'hub', bg: 'bg-[#6961ff]/10' },
+		{ name: 'Google Drive', desc: 'Knowledge Base Sync', enabled: true, icon: 'cloud', bg: 'bg-blue-500/10' },
+		{ name: 'GitHub', desc: 'Codebase Automation', enabled: false, icon: 'code', bg: 'bg-[#24292E]/20' },
 	];
+
+	$: totalAgents = $departments.reduce((a, d) => a + d.agentCount, 0);
+	$: activeDeptCount = $departments.filter(d => d.status === 'active').length;
 </script>
 
 <div class="w-full h-full overflow-y-auto px-4 py-6 sm:px-6 sm:py-8 lg:p-12">
@@ -25,11 +31,11 @@
 			</div>
 			<div class="flex flex-col sm:flex-row gap-2 sm:gap-3">
 				<button class="flex items-center justify-center gap-2 bg-white/5 hover:bg-white/10 text-slate-100 px-4 sm:px-5 py-2.5 rounded-lg border border-white/10 font-semibold transition-all text-sm">
-					<span class="material-symbols-outlined text-[20px]">file_download</span>
+					<MaterialIcon icon="file_download" size={20} />
 					Export Audit Logs
 				</button>
 				<button class="flex items-center justify-center gap-2 bg-[#6961ff] hover:bg-[#6961ff]/90 text-white px-4 sm:px-5 py-2.5 rounded-lg font-bold shadow-lg shadow-[#6961ff]/20 transition-all text-sm">
-					<span class="material-symbols-outlined text-[20px]">person_add</span>
+					<MaterialIcon icon="person_add" size={20} />
 					Invite Member
 				</button>
 			</div>
@@ -37,31 +43,31 @@
 
 		<div class="grid grid-cols-1 gap-6 lg:gap-8">
 			<!-- Workspace Details -->
-			<section class="glass rounded-xl p-5 sm:p-6 lg:p-8">
+			<GlassPanel class="p-5 sm:p-6 lg:p-8">
 				<div class="flex items-center gap-2 mb-6 lg:mb-8">
-					<span class="material-symbols-outlined text-[#6961ff]">edit_square</span>
+					<MaterialIcon icon="edit_square" class="text-[#6961ff]" />
 					<h3 class="text-base lg:text-lg font-bold text-slate-100">Workspace Details</h3>
 				</div>
 				<div class="grid grid-cols-1 sm:grid-cols-2 gap-5 sm:gap-6 lg:gap-8">
 					<div class="space-y-2">
-						<label class="text-sm font-semibold text-slate-400 px-1">Organization Name</label>
-						<input bind:value={orgName} class="w-full bg-[#1c1c21] border border-white/10 rounded-lg px-4 py-3 text-slate-100 focus:ring-2 focus:ring-[#6961ff] focus:border-transparent transition-all outline-none text-sm" />
+						<label class="text-sm font-semibold text-slate-400 px-1" for="org-name">Organization Name</label>
+						<input id="org-name" bind:value={orgName} class="w-full bg-[#1c1c21] border border-white/10 rounded-lg px-4 py-3 text-slate-100 focus:ring-2 focus:ring-[#6961ff] focus:border-transparent transition-all outline-none text-sm" />
 					</div>
 					<div class="space-y-2">
-						<label class="text-sm font-semibold text-slate-400 px-1">Workspace Domain</label>
-						<input bind:value={domain} class="w-full bg-[#1c1c21] border border-white/10 rounded-lg px-4 py-3 text-slate-100 focus:ring-2 focus:ring-[#6961ff] focus:border-transparent transition-all outline-none text-sm" />
+						<label class="text-sm font-semibold text-slate-400 px-1" for="workspace-domain">Workspace Domain</label>
+						<input id="workspace-domain" bind:value={domain} class="w-full bg-[#1c1c21] border border-white/10 rounded-lg px-4 py-3 text-slate-100 focus:ring-2 focus:ring-[#6961ff] focus:border-transparent transition-all outline-none text-sm" />
 					</div>
 				</div>
-			</section>
+			</GlassPanel>
 
 			<!-- Team -->
-			<section class="glass rounded-xl overflow-hidden">
+			<GlassPanel class="overflow-hidden">
 				<div class="p-5 sm:p-6 lg:p-8 pb-3 sm:pb-4 flex flex-col sm:flex-row sm:items-center justify-between gap-2">
 					<div class="flex items-center gap-2">
-						<span class="material-symbols-outlined text-[#20B2AA]">groups</span>
+						<MaterialIcon icon="groups" class="text-[#20B2AA]" />
 						<h3 class="text-base lg:text-lg font-bold text-slate-100">Team Members</h3>
 					</div>
-					<span class="bg-[#20B2AA]/10 text-[#20B2AA] text-[10px] font-bold px-2 py-1 rounded tracking-wider uppercase w-fit">12 Active Seats</span>
+					<span class="bg-[#20B2AA]/10 text-[#20B2AA] text-[10px] font-bold px-2 py-1 rounded tracking-wider uppercase w-fit">{team.length} Active Seat{team.length !== 1 ? 's' : ''}</span>
 				</div>
 				<div class="overflow-x-auto">
 					<table class="w-full text-left">
@@ -92,78 +98,84 @@
 									</td>
 									<td class="px-5 sm:px-8 py-3 sm:py-4 text-sm text-slate-400 font-medium">{member.lastActive}</td>
 									<td class="px-5 sm:px-8 py-3 sm:py-4 text-right">
-										<button class="material-symbols-outlined text-slate-500 hover:text-white transition-colors">more_horiz</button>
+										<button class="text-slate-500 hover:text-white transition-colors">
+											<MaterialIcon icon="more_horiz" />
+										</button>
 									</td>
 								</tr>
 							{/each}
 						</tbody>
 					</table>
 				</div>
-			</section>
+			</GlassPanel>
 
-			<!-- Billing -->
+			<!-- Billing + Usage -->
 			<div class="grid grid-cols-1 lg:grid-cols-3 gap-6 lg:gap-8">
-				<div class="lg:col-span-1 glass rounded-xl p-5 sm:p-6 lg:p-8 relative overflow-hidden">
+				<GlassPanel class="lg:col-span-1 p-5 sm:p-6 lg:p-8 relative overflow-hidden">
 					<div class="absolute -top-12 -right-12 size-40 bg-[#6961ff]/10 blur-[60px] rounded-full"></div>
 					<div class="relative z-10">
 						<div class="flex justify-between items-start mb-4 lg:mb-6">
-							<span class="text-xs font-bold uppercase tracking-widest text-[#6961ff]">Current Plan</span>
-							<span class="material-symbols-outlined text-[#6961ff]">verified</span>
+							<span class="text-xs font-bold uppercase tracking-widest text-[#6961ff]">Overview</span>
+							<MaterialIcon icon="verified" class="text-[#6961ff]" />
 						</div>
-						<h4 class="text-2xl sm:text-3xl font-black text-slate-100 tracking-tight">Enterprise Plus</h4>
-						<p class="text-slate-400 mt-2 text-sm leading-relaxed">Scale without limits with dedicated AI models and priority support.</p>
-						<div class="mt-6 lg:mt-8">
-							<div class="text-slate-100 font-bold">$2,499<span class="text-slate-500 text-sm font-normal">/month</span></div>
+						<h4 class="text-2xl sm:text-3xl font-black text-slate-100 tracking-tight">AgencyOS</h4>
+						<p class="text-slate-400 mt-2 text-sm leading-relaxed">{activeDeptCount} departments active, {totalAgents} agents deployed.</p>
+						<div class="mt-6 lg:mt-8 space-y-2">
+							<div class="flex justify-between text-sm">
+								<span class="text-slate-400">Departments</span>
+								<span class="text-white font-medium">{$departments.length}</span>
+							</div>
+							<div class="flex justify-between text-sm">
+								<span class="text-slate-400">Total Agents</span>
+								<span class="text-white font-medium">{totalAgents}</span>
+							</div>
 						</div>
-						<button class="w-full mt-4 lg:mt-6 bg-white/10 hover:bg-white/15 text-white py-3 rounded-lg font-bold border border-white/10 transition-all">
-							Upgrade Plan
-						</button>
 					</div>
-				</div>
+				</GlassPanel>
 
-				<div class="lg:col-span-2 glass rounded-xl p-5 sm:p-6 lg:p-8">
+				<GlassPanel class="lg:col-span-2 p-5 sm:p-6 lg:p-8">
 					<div class="flex items-center gap-2 mb-6 lg:mb-8">
-						<span class="material-symbols-outlined text-[#6961ff]">analytics</span>
-						<h3 class="text-base lg:text-lg font-bold text-slate-100">Monthly Usage</h3>
+						<MaterialIcon icon="analytics" class="text-[#6961ff]" />
+						<h3 class="text-base lg:text-lg font-bold text-slate-100">Resource Usage</h3>
 					</div>
 					<div class="space-y-6 lg:space-y-8">
 						<div class="space-y-3">
 							<div class="flex justify-between items-end">
 								<span class="text-sm font-semibold text-slate-100">AI Tokens Processed</span>
-								<span class="text-xs font-medium text-slate-400">8.4M / 10M</span>
+								<span class="text-xs font-medium text-slate-400">— / —</span>
 							</div>
 							<div class="w-full h-3 bg-white/5 rounded-full overflow-hidden">
-								<div class="h-full bg-gradient-to-r from-[#6961ff] to-[#20B2AA] rounded-full" style="width: 84%"></div>
+								<div class="h-full bg-gradient-to-r from-[#6961ff] to-[#20B2AA] rounded-full" style="width: 0%"></div>
 							</div>
-							<p class="text-[11px] text-slate-500 italic">Resetting in 14 days</p>
+							<p class="text-[11px] text-slate-500 italic">Usage tracking coming soon</p>
 						</div>
 						<div class="space-y-3">
 							<div class="flex justify-between items-end">
 								<span class="text-sm font-semibold text-slate-100">Automated Workflows</span>
-								<span class="text-xs font-medium text-slate-400">42,100 / Unlimited</span>
+								<span class="text-xs font-medium text-slate-400">0 / Unlimited</span>
 							</div>
 							<div class="w-full h-3 bg-white/5 rounded-full overflow-hidden">
-								<div class="h-full bg-[#20B2AA] rounded-full" style="width: 25%"></div>
+								<div class="h-full bg-[#20B2AA] rounded-full" style="width: 0%"></div>
 							</div>
 						</div>
 					</div>
-				</div>
+				</GlassPanel>
 			</div>
 
 			<!-- Integrations -->
-			<section class="glass rounded-xl p-5 sm:p-6 lg:p-8">
+			<GlassPanel class="p-5 sm:p-6 lg:p-8">
 				<div class="flex items-center justify-between mb-6 lg:mb-8">
 					<div class="flex items-center gap-2">
-						<span class="material-symbols-outlined text-[#6961ff]">grid_view</span>
+						<MaterialIcon icon="grid_view" class="text-[#6961ff]" />
 						<h3 class="text-base lg:text-lg font-bold text-slate-100">Connected Services</h3>
 					</div>
-					<a class="text-sm font-semibold text-[#6961ff] hover:underline" href="#">Marketplace</a>
+					<button class="text-sm font-semibold text-[#6961ff] hover:underline">Marketplace</button>
 				</div>
 				<div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4 sm:gap-5 lg:gap-6">
 					{#each integrations as integ}
 						<div class="bg-[#1c1c21]/50 border border-white/10 p-4 sm:p-5 rounded-xl flex items-center gap-4 hover:border-[#6961ff]/30 transition-all {integ.enabled ? '' : 'opacity-70'}">
 							<div class="size-10 sm:size-12 rounded-lg {integ.bg} flex items-center justify-center shrink-0">
-								<span class="material-symbols-outlined text-white">{integ.name === 'Discord' ? 'forum' : integ.name === 'Notion' ? 'note' : 'code'}</span>
+								<MaterialIcon icon={integ.icon} class="text-white" />
 							</div>
 							<div class="flex-1 min-w-0">
 								<h5 class="text-sm font-bold text-slate-100">{integ.name}</h5>
@@ -177,19 +189,7 @@
 						</div>
 					{/each}
 				</div>
-			</section>
+			</GlassPanel>
 		</div>
 	</div>
 </div>
-
-<style>
-	.glass {
-		background: rgba(28, 28, 33, 0.7);
-		backdrop-filter: blur(12px);
-		-webkit-backdrop-filter: blur(12px);
-		border: 1px solid rgba(255, 255, 255, 0.08);
-	}
-	/* Note: glass class kept as scoped style since it's used on multiple elements
-	   and doesn't need dynamic values. Will migrate to GlassPanel when
-	   these sections become separate components. */
-</style>

@@ -1,8 +1,12 @@
 <script lang="ts">
+	import { onDestroy } from 'svelte';
 	import { goto } from '$app/navigation';
+	import { onboardingComplete } from '$lib/stores/agencyos';
+	import GlassPanel from '$lib/components/agencyos/shared/GlassPanel.svelte';
+	import MaterialIcon from '$lib/components/agencyos/shared/MaterialIcon.svelte';
 
-	let currentTime = '14:02';
-	let currentDate = 'Wednesday, October 24';
+	let currentTime = '';
+	let currentDate = '';
 
 	function updateTime() {
 		const now = new Date();
@@ -11,12 +15,16 @@
 	}
 
 	function unlock() {
-		goto('/agencyos');
+		if ($onboardingComplete) {
+			goto('/agencyos');
+		} else {
+			goto('/agencyos/onboarding/step1');
+		}
 	}
 
-	// Update time every second
-	const interval = setInterval(updateTime, 1000);
 	updateTime();
+	const interval = setInterval(updateTime, 1000);
+	onDestroy(() => clearInterval(interval));
 </script>
 
 <div class="relative z-10 flex h-full w-full flex-col justify-between p-6 md:p-10">
@@ -26,19 +34,19 @@
 	<!-- Header -->
 	<header class="flex w-full items-center justify-between relative z-10">
 		<div class="flex items-center gap-2 text-white/60 text-sm font-medium tracking-wide">
-			<span class="material-symbols-outlined text-[18px]">signal_cellular_alt</span>
+			<MaterialIcon icon="signal_cellular_alt" size={18} />
 			<span>AgencyOS Network</span>
 		</div>
 		<div class="flex items-center gap-4">
 			<div class="hidden md:flex gap-3">
-				<div class="glass-button flex h-8 items-center justify-center rounded-full px-3 text-white/80 gap-2">
-					<span class="material-symbols-outlined text-[16px]">wifi</span>
+				<GlassPanel class="flex h-8 items-center justify-center rounded-full px-3 text-white/80 gap-2" opacity={0.3} blur={12} rounded="rounded-full">
+					<MaterialIcon icon="wifi" size={16} />
 					<span class="text-xs font-semibold">Wi-Fi 6E</span>
-				</div>
-				<div class="glass-button flex h-8 items-center justify-center rounded-full px-3 text-white/80 gap-2">
-					<span class="material-symbols-outlined text-[16px]">memory</span>
+				</GlassPanel>
+				<GlassPanel class="flex h-8 items-center justify-center rounded-full px-3 text-white/80 gap-2" opacity={0.3} blur={12} rounded="rounded-full">
+					<MaterialIcon icon="memory" size={16} />
 					<span class="text-xs font-semibold">AI Core Online</span>
-				</div>
+				</GlassPanel>
 			</div>
 		</div>
 	</header>
@@ -50,15 +58,15 @@
 			{currentTime}
 		</h1>
 		<div class="mt-8 flex flex-col items-center gap-3">
-			<div class="flex items-center gap-3 rounded-2xl glass-panel px-6 py-3 shadow-lg">
+			<GlassPanel class="flex items-center gap-3 px-6 py-3 shadow-lg" opacity={0.03} blur={10} borderOpacity={0.05}>
 				<div class="flex h-8 w-8 items-center justify-center rounded-lg bg-gradient-to-br from-[#6961ff] to-purple-600 shadow-inner">
-					<span class="material-symbols-outlined text-white text-[20px]">dataset</span>
+					<MaterialIcon icon="dataset" size={20} class="text-white" />
 				</div>
 				<div class="flex flex-col text-left">
 					<span class="text-lg font-bold leading-tight tracking-tight text-white">AgencyOS</span>
 					<span class="text-[10px] font-medium uppercase tracking-wider text-white/50">Neural Workspace</span>
 				</div>
-			</div>
+			</GlassPanel>
 		</div>
 	</main>
 
@@ -67,12 +75,12 @@
 		<button class="relative group cursor-pointer" on:click={unlock}>
 			<div class="absolute -inset-1 rounded-full bg-[#6961ff]/20 blur-lg opacity-50 group-hover:opacity-100 transition duration-500 animate-pulse"></div>
 			<div class="relative flex h-16 w-16 items-center justify-center rounded-full bg-white/10 text-white backdrop-blur-md transition-all duration-300 hover:bg-white/20 hover:scale-105 active:scale-95 border border-white/10 ring-1 ring-white/20">
-				<span class="material-symbols-outlined text-[32px]">fingerprint</span>
+				<MaterialIcon icon="fingerprint" size={32} />
 			</div>
 		</button>
-		<button class="group flex items-center gap-2 rounded-full glass-panel px-6 py-2.5 text-sm font-medium text-white transition-all hover:bg-white/10" on:click={unlock}>
+		<button class="group flex items-center gap-2 rounded-full px-6 py-2.5 text-sm font-medium text-white transition-all hover:bg-white/10 bg-white/5 backdrop-blur-md border border-white/5" on:click={unlock}>
 			<span class="group-hover:text-[#6961ff] transition-colors">Click or Swipe to Enter</span>
-			<span class="material-symbols-outlined text-[16px] text-white/50 group-hover:translate-x-1 group-hover:text-white transition-all">arrow_forward</span>
+			<MaterialIcon icon="arrow_forward" size={16} class="text-white/50 group-hover:translate-x-1 group-hover:text-white transition-all" />
 		</button>
 	</footer>
 </div>
@@ -87,16 +95,5 @@
 		position: absolute;
 		inset: 0;
 		z-index: 0;
-	}
-	.glass-panel {
-		background: rgba(255, 255, 255, 0.03);
-		backdrop-filter: blur(10px);
-		-webkit-backdrop-filter: blur(10px);
-		border: 1px solid rgba(255, 255, 255, 0.05);
-	}
-	.glass-button {
-		background: rgba(40, 39, 58, 0.4);
-		backdrop-filter: blur(12px);
-		-webkit-backdrop-filter: blur(12px);
 	}
 </style>
