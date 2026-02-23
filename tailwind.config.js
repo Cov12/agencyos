@@ -27,7 +27,6 @@ export default {
 				'aos-primary': '#6961ff',
 				'aos-accent': '#20B2AA',
 				'aos-primary-hover': '#5851d8'
-				}
 			},
 			typography: {
 				DEFAULT: {
