@@ -121,6 +121,16 @@ export const createOrganization = async (
 	);
 };
 
+export const getOrganizationForUser = async (token: string) => {
+	// TODO: Backend endpoint to look up org by authenticated user
+	// For now, fall back to 'default' org
+	try {
+		return await getOrganization(token, 'default');
+	} catch {
+		return null;
+	}
+};
+
 export const getOrgMembers = async (token: string, orgId: string) => {
 	return apiCall<{ members: OrgMember[]; total: number }>(
 		`${AGENCYOS_API_BASE}/orgs/${orgId}/members`,

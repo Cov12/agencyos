@@ -1,15 +1,26 @@
 <script lang="ts">
-	import { departments } from '$lib/stores/agencyos';
+	import { onMount } from 'svelte';
+	import { departments, activeOrgId } from '$lib/stores/agencyos';
+	import { user } from '$lib/stores';
+	import { getOrganization, getOrgMembers } from '$lib/apis/agencyos';
 	import GlassPanel from '$lib/components/agencyos/shared/GlassPanel.svelte';
 	import MaterialIcon from '$lib/components/agencyos/shared/MaterialIcon.svelte';
 
 	let orgName = 'AgencyOS';
 	let domain = 'agencyos.app';
+	let isLoading = false;
 
-	// Team members (will be store-driven when user management is added)
-	const team = [
-		{ initials: 'CO', name: 'Cov', email: 'cov@wbit.agency', role: 'OWNER', roleStyle: 'bg-[#6961ff]/10 text-[#6961ff] border-[#6961ff]/20', lastActive: 'Just now', gradient: true },
-	];
+	type TeamMember = {
+		initials: string;
+		name: string;
+		email: string;
+		role: string;
+		roleStyle: string;
+		lastActive: string;
+		gradient: boolean;
+	};
+
+	let team: TeamMember[] = [];
 
 	const integrations = [
 		{ name: 'WorkPipe', desc: 'CRM & Pipeline', enabled: true, icon: 'hub', bg: 'bg-[#6961ff]/10' },
@@ -17,8 +28,69 @@
 		{ name: 'GitHub', desc: 'Codebase Automation', enabled: false, icon: 'code', bg: 'bg-[#24292E]/20' },
 	];
 
+	const ROLE_STYLES: Record<string, string> = {
+		OWNER: 'bg-[#6961ff]/10 text-[#6961ff] border-[#6961ff]/20',
+		ADMIN: 'bg-blue-500/10 text-blue-400 border-blue-500/20',
+		MEMBER: 'bg-slate-500/10 text-slate-300 border-slate-500/20'
+	};
+
+	function getInitials(name: string, email: string) {
+		if (name?.trim()) {
+			return name
+				.split(' ')
+				.filter(Boolean)
+				.slice(0, 2)
+				.map((part) => part[0]?.toUpperCase())
+				.join('');
+		}
+
+		return email.slice(0, 2).toUpperCase();
+	}
+
+	async function loadSettings() {
+		const token = ($user as { token?: string } | undefined)?.token;
+		if (!token) return;
+
+		isLoading = true;
+		try {
+			const [organization, membersResponse] = await Promise.all([
+				getOrganization(token, $activeOrgId),
+				getOrgMembers(token, $activeOrgId)
+			]);
+
+			orgName = organization.name || orgName;
+			domain = organization.slug ? `${organization.slug}.agencyos.app` : domain;
+
+			team = membersResponse.members.map((member) => {
+				const displayName = member.user_id || 'Team Member';
+				return {
+					initials: getInitials(displayName, member.user_id),
+					name: displayName,
+					email: member.user_id,
+					role: member.role.toUpperCase(),
+					roleStyle: ROLE_STYLES[member.role.toUpperCase()] || ROLE_STYLES.MEMBER,
+					lastActive: '—',
+					gradient: member.role.toUpperCase() === 'OWNER'
+				};
+			});
+		} catch (error) {
+			console.error('Failed to load organization settings:', error);
+		} finally {
+			isLoading = false;
+		}
+	}
+
+	function saveSettings() {
+		// TODO: Wire save action when organization update endpoint is available.
+		console.info('Save settings is not yet connected to backend update endpoint.');
+	}
+
+	onMount(() => {
+		loadSettings();
+	});
+
 	$: totalAgents = $departments.reduce((a, d) => a + d.agentCount, 0);
-	$: activeDeptCount = $departments.filter(d => d.status === 'active').length;
+	$: activeDeptCount = $departments.filter((d) => d.status === 'active').length;
 </script>
 
 <div class="w-full h-full overflow-y-auto px-4 py-6 sm:px-6 sm:py-8 lg:p-12">
@@ -34,7 +106,7 @@
 					<MaterialIcon icon="file_download" size={20} />
 					Export Audit Logs
 				</button>
-				<button class="flex items-center justify-center gap-2 bg-[#6961ff] hover:bg-[#6961ff]/90 text-white px-4 sm:px-5 py-2.5 rounded-lg font-bold shadow-lg shadow-[#6961ff]/20 transition-all text-sm">
+				<button class="flex items-center justify-center gap-2 bg-[#6961ff] hover:bg-[#6961ff]/90 text-white px-4 sm:px-5 py-2.5 rounded-lg font-bold shadow-lg shadow-[#6961ff]/20 transition-all text-sm" on:click={saveSettings}>
 					<MaterialIcon icon="person_add" size={20} />
 					Invite Member
 				</button>
@@ -67,7 +139,7 @@
 						<MaterialIcon icon="groups" class="text-[#20B2AA]" />
 						<h3 class="text-base lg:text-lg font-bold text-slate-100">Team Members</h3>
 					</div>
-					<span class="bg-[#20B2AA]/10 text-[#20B2AA] text-[10px] font-bold px-2 py-1 rounded tracking-wider uppercase w-fit">{team.length} Active Seat{team.length !== 1 ? 's' : ''}</span>
+					<span class="bg-[#20B2AA]/10 text-[#20B2AA] text-[10px] font-bold px-2 py-1 rounded tracking-wider uppercase w-fit">{isLoading ? 'Loading...' : `${team.length} Active Seat${team.length !== 1 ? 's' : ''}`}</span>
 				</div>
 				<div class="overflow-x-auto">
 					<table class="w-full text-left">
@@ -181,10 +253,10 @@
 								<h5 class="text-sm font-bold text-slate-100">{integ.name}</h5>
 								<p class="text-[11px] text-slate-500">{integ.desc}</p>
 							</div>
-							<label class="relative inline-flex items-center cursor-pointer shrink-0">
+							<label class="relative inline-flex items-center cursor-pointer shrink-0 p-2">
 								<input type="checkbox" checked={integ.enabled} class="sr-only peer" />
 								<div class="w-11 h-6 bg-white/10 rounded-full transition-all peer peer-checked:bg-[#6961ff]"></div>
-								<div class="absolute left-1 top-1 bg-slate-300 size-4 rounded-full transition-all peer-checked:translate-x-5 peer-checked:bg-white"></div>
+								<div class="absolute left-3 top-3 bg-slate-300 size-4 rounded-full transition-all peer-checked:translate-x-5 peer-checked:bg-white"></div>
 							</label>
 						</div>
 					{/each}

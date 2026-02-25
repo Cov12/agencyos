@@ -6,16 +6,18 @@
 		user,
 		mobile
 	} from '$lib/stores';
+	import { getOrganization, createOrganization } from '$lib/apis/agencyos';
 	import { page } from '$app/stores';
 	import { goto } from '$app/navigation';
 	import Tooltip from '$lib/components/common/Tooltip.svelte';
 	import Sidebar from '$lib/components/icons/Sidebar.svelte';
 	import AgencyNav from '$lib/components/agencyos/shared/AgencyNav.svelte';
-	import { agencyNavCollapsed, agencyNavMobile } from '$lib/stores/agencyos';
+	import { agencyNavCollapsed, agencyNavMobile, activeOrg } from '$lib/stores/agencyos';
 
 	const i18n = getContext('i18n');
 
 	let loaded = false;
+	let orgLoading = true;
 
 	// Sync mobile state from parent app
 	$: agencyNavMobile.set($mobile);
@@ -29,6 +31,33 @@
 
 	onMount(async () => {
 		loaded = true;
+
+		const token = (($user as { token?: string } | undefined)?.token ?? localStorage.token) as
+			| string
+			| undefined;
+
+		if (!token) {
+			orgLoading = false;
+			return;
+		}
+
+		try {
+			// TODO: Support multi-org — load user's org from membership lookup
+			const organization = await getOrganization(token, 'default');
+			activeOrg.set(organization);
+		} catch (error) {
+			try {
+				const created = await createOrganization(token, {
+					name: 'My Organization',
+					slug: 'default'
+				});
+				activeOrg.set(created.organization);
+			} catch (createError) {
+				console.error('Failed to resolve organization context', createError ?? error);
+			}
+		} finally {
+			orgLoading = false;
+		}
 	});
 
 	// Pages that use full-screen overlays (no nav chrome)
@@ -107,7 +136,14 @@
 				class="flex-1 overflow-y-auto {isOverlay ? '' : 'p-4 md:p-6'}"
 				id="agencyos-container"
 			>
-				<slot />
+				{#if orgLoading}
+					<div class="h-full min-h-[240px] flex items-center justify-center text-slate-400">
+						<div class="h-5 w-5 animate-spin rounded-full border-2 border-white/20 border-t-white mr-3"></div>
+						Resolving organization context...
+					</div>
+				{:else}
+					<slot />
+				{/if}
 			</div>
 		</div>
 

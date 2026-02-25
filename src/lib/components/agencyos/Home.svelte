@@ -1,23 +1,31 @@
 <script lang="ts">
+	import { onMount } from 'svelte';
 	import { goto } from '$app/navigation';
+	import { user } from '$lib/stores';
+	import { activeOrgId } from '$lib/stores/agencyos';
+	import { getDepartments, getProposals, getProposalStats, type Department as ApiDepartment } from '$lib/apis/agencyos';
 	import AppIcon from '$lib/components/agencyos/shared/AppIcon.svelte';
 	import GlassPanel from '$lib/components/agencyos/shared/GlassPanel.svelte';
 	import MaterialIcon from '$lib/components/agencyos/shared/MaterialIcon.svelte';
 	import StatusBadge from '$lib/components/agencyos/shared/StatusBadge.svelte';
 
-	const apps = [
-		{ label: 'Chat', icon: 'chat_bubble', gradient: 'from-green-400 to-emerald-600', href: '/agencyos/chat', badge: 3 },
+	let searchQuery = '';
+	let showSpotlight = true;
+	let isLoading = false;
+	let apiDepartments: ApiDepartment[] = [];
+	let proposalTotal = 0;
+	let pendingTotal = 0;
+
+	let apps = [
+		{ label: 'Chat', icon: 'chat_bubble', gradient: 'from-green-400 to-emerald-600', href: '/agencyos/chat', badge: 0 },
 		{ label: 'Dashboard', icon: 'dashboard', gradient: 'from-blue-500 to-indigo-600', href: '/agencyos/analytics' },
-		{ label: 'Proposals', icon: 'description', gradient: 'from-orange-400 to-red-500', href: '/agencyos/proposals' },
-		{ label: 'Departments', icon: 'domain', gradient: 'from-purple-500 to-pink-600', href: '/agencyos/departments' },
+		{ label: 'Proposals', icon: 'description', gradient: 'from-orange-400 to-red-500', href: '/agencyos/proposals', badge: 0 },
+		{ label: 'Departments', icon: 'domain', gradient: 'from-purple-500 to-pink-600', href: '/agencyos/departments', badge: 0 },
 		{ label: 'Voice', icon: 'graphic_eq', gradient: 'from-cyan-400 to-blue-500', href: '/agencyos/voice' },
 		{ label: 'Knowledge', icon: 'school', gradient: 'from-yellow-400 to-orange-500', href: '/agencyos/knowledge', badge: 1 },
 		{ label: 'Settings', icon: 'settings', gradient: 'from-slate-500 to-slate-700', href: '/agencyos/settings' },
 		{ label: 'Analytics', icon: 'monitoring', gradient: 'from-fuchsia-500 to-purple-600', href: '/agencyos/analytics' },
 	];
-
-	let searchQuery = '';
-	let showSpotlight = true;
 
 	interface SearchResult {
 		title: string;
@@ -28,11 +36,67 @@
 		tagColor: string;
 	}
 
-	const searchResults: SearchResult[] = [
-		{ title: 'Sales AI Report Q3', subtitle: 'Modified today at 9:41 AM', icon: 'description', gradient: 'from-orange-400 to-red-500', tag: 'Proposals', tagColor: 'orange' },
-		{ title: 'Customer Satisfaction Chart', subtitle: 'Chart • 2.4 MB', icon: 'monitoring', gradient: 'from-fuchsia-500 to-purple-600', tag: 'Analytics', tagColor: 'purple' },
-		{ title: 'Sales Team Lead', subtitle: 'Contact Card', icon: 'domain', gradient: 'from-purple-500 to-pink-600', tag: 'Departments', tagColor: 'pink' },
-	];
+	async function loadHomeData() {
+		const token = ($user as { token?: string } | undefined)?.token;
+		if (!token) return;
+
+		isLoading = true;
+		try {
+			const [departmentsResponse, proposalStats, proposalsResponse] = await Promise.all([
+				getDepartments(token, $activeOrgId),
+				getProposalStats(token, $activeOrgId),
+				getProposals(token, $activeOrgId, { limit: 3 })
+			]);
+
+			apiDepartments = departmentsResponse.departments;
+			proposalTotal = proposalStats.total;
+			pendingTotal = proposalStats.pending;
+
+			const proposalsApp = apps.find((app) => app.label === 'Proposals');
+			const departmentsApp = apps.find((app) => app.label === 'Departments');
+			const chatApp = apps.find((app) => app.label === 'Chat');
+
+			if (proposalsApp) proposalsApp.badge = pendingTotal;
+			if (departmentsApp) departmentsApp.badge = apiDepartments.length;
+			if (chatApp) chatApp.badge = Math.min(proposalsResponse.total, 9);
+			apps = [...apps];
+		} catch (error) {
+			console.error('Failed to load AgencyOS home data:', error);
+		} finally {
+			isLoading = false;
+		}
+	}
+
+	onMount(() => {
+		loadHomeData();
+	});
+
+	$: searchResults = [
+		{
+			title: `${proposalTotal} Total Proposals`,
+			subtitle: pendingTotal > 0 ? `${pendingTotal} require review` : 'No pending approvals',
+			icon: 'description',
+			gradient: 'from-orange-400 to-red-500',
+			tag: 'Proposals',
+			tagColor: 'orange'
+		},
+		{
+			title: `${apiDepartments.length} Departments Connected`,
+			subtitle: apiDepartments.map((d) => d.name).slice(0, 2).join(' • ') || 'No departments found',
+			icon: 'domain',
+			gradient: 'from-purple-500 to-pink-600',
+			tag: 'Departments',
+			tagColor: 'pink'
+		},
+		{
+			title: isLoading ? 'Syncing workspace data...' : 'Analytics Overview Ready',
+			subtitle: 'Live data connected from AgencyOS API',
+			icon: 'monitoring',
+			gradient: 'from-fuchsia-500 to-purple-600',
+			tag: 'Analytics',
+			tagColor: 'purple'
+		}
+	] as SearchResult[];
 
 	function handleKeydown(e: KeyboardEvent) {
 		if (e.key === 'Escape') showSpotlight = false;

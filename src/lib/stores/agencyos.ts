@@ -68,3 +68,14 @@ export const activeDept = derived([departments, activeDeptId], ([$depts, $id]) =
 // ── Onboarding ───────────────────────────────────────────────
 export const onboardingComplete = writable(false);
 export const onboardingStep = writable(0);
+
+// ── Organization Context ─────────────────────────────────────
+export interface OrgContext {
+	id: string;
+	name: string;
+	slug: string;
+	plan: string;
+}
+
+export const activeOrg = writable<OrgContext | null>(null);
+export const activeOrgId = derived(activeOrg, ($org) => $org?.id ?? '');

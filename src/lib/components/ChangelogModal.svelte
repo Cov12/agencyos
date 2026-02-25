@@ -1,13 +1,9 @@
 <script lang="ts">
-	import DOMPurify from 'dompurify';
-
 	import { onMount, getContext } from 'svelte';
 	import { Confetti } from 'svelte-confetti';
 
 	import { WEBUI_NAME, config, settings } from '$lib/stores';
-
 	import { WEBUI_VERSION } from '$lib/constants';
-	import { getChangelog } from '$lib/apis';
 
 	import Modal from './common/Modal.svelte';
 	import { updateUserSettings } from '$lib/apis/users';
@@ -17,12 +13,6 @@
 
 	export let show = false;
 
-	let changelog = null;
-
-	const init = async () => {
-		changelog = await getChangelog();
-	};
-
 	const closeModal = async () => {
 		localStorage.version = $config.version;
 		await settings.set({ ...$settings, ...{ version: $config.version } });
@@ -30,17 +20,40 @@
 		show = false;
 	};
 
-	$: if (show) {
-		init();
-	}
+	const features = [
+		{
+			icon: '🏢',
+			title: 'AI-Powered Organization',
+			desc: 'Your business gets a full AI org chart — Chief AI, department heads, and specialized agents working together like a Fortune 500 team.'
+		},
+		{
+			icon: '💬',
+			title: 'Chat With Your Departments',
+			desc: 'Talk to Sales, Customer Support, or Back Office directly. Each department knows its role, has its own knowledge base, and stays in its lane.'
+		},
+		{
+			icon: '🎙️',
+			title: 'Voice Mode',
+			desc: 'Have real-time voice conversations with your AI team — hands-free, on the go. Like calling your best employee.'
+		},
+		{
+			icon: '📋',
+			title: 'Delegated Actions',
+			desc: 'Your AI proposes actions, you approve them. Nothing happens without your say-so. Full control, zero surprises.'
+		},
+		{
+			icon: '📊',
+			title: 'Analytics Dashboard',
+			desc: 'See what your AI team is doing, how departments are performing, and where to focus next — all in one view.'
+		}
+	];
 </script>
 
 <Modal bind:show size="xl">
-	<div class="px-6 pt-5 dark:text-white text-black">
+	<div class="px-6 pt-5 text-white">
 		<div class="flex justify-between items-start">
 			<div class="text-xl font-medium">
-				{$i18n.t("What's New in")}
-				{$WEBUI_NAME}
+				Welcome to AgencyOS
 				<Confetti x={[-1, -0.25]} y={[0, 0.5]} />
 			</div>
 			<button class="self-center" on:click={closeModal} aria-label={$i18n.t('Close')}>
@@ -50,62 +63,40 @@
 			</button>
 		</div>
 		<div class="flex items-center mt-1">
-			<div class="text-sm dark:text-gray-200">{$i18n.t('Release Notes')}</div>
-			<div class="flex self-center w-[1px] h-6 mx-2.5 bg-gray-50/50 dark:bg-gray-850/50" />
-			<div class="text-sm dark:text-gray-200">
+			<div class="text-sm text-gray-400">Your AI Organization Operating System</div>
+			<div class="flex self-center w-[1px] h-6 mx-2.5 bg-gray-700" />
+			<div class="text-sm text-gray-400">
 				v{WEBUI_VERSION}
 			</div>
 		</div>
 	</div>
 
-	<div class=" w-full p-4 px-5 text-gray-700 dark:text-gray-100">
-		<div class=" overflow-y-scroll max-h-[30rem] scrollbar-hidden">
-			<div class="mb-3">
-				{#if changelog}
-					{#each Object.keys(changelog) as version}
-						<div class=" mb-3 pr-2">
-							<div class="font-semibold text-xl mb-1 dark:text-white">
-								v{version} - {changelog[version].date}
-							</div>
+	<div class="w-full p-4 px-5 text-gray-300">
+		<div class="overflow-y-scroll max-h-[30rem] scrollbar-hidden">
+			<div class="mb-3 space-y-4">
+				<p class="text-sm text-gray-400 leading-relaxed">
+					AgencyOS gives your small business the leverage of a Fortune 500 company — 
+					powered by AI departments that think, plan, and execute alongside you.
+				</p>
 
-							<hr class="border-gray-50/50 dark:border-gray-850/50 my-2" />
-
-							{#each Object.keys(changelog[version]).filter((section) => section !== 'date') as section}
-								<div class="w-full">
-									<div
-										class="font-semibold uppercase text-xs {section === 'added'
-											? 'bg-blue-500/20 text-blue-700 dark:text-blue-200'
-											: section === 'fixed'
-												? 'bg-green-500/20 text-green-700 dark:text-green-200'
-												: section === 'changed'
-													? 'bg-yellow-500/20 text-yellow-700 dark:text-yellow-200'
-													: section === 'removed'
-														? 'bg-red-500/20 text-red-700 dark:text-red-200'
-														: ''}  w-fit rounded-xl px-2 my-2.5"
-									>
-										{section}
-									</div>
-
-									<div class="my-2.5 px-1.5 markdown-prose-sm !list-none !w-full !max-w-none">
-										{#each changelog[version][section] as entry}
-											<div class="my-2">
-												{@html DOMPurify.sanitize(entry?.raw)}
-											</div>
-										{/each}
-									</div>
-								</div>
-							{/each}
+				{#each features as feature}
+					<div class="flex gap-3 p-3 rounded-xl" style="background: rgba(255, 255, 255, 0.03); border: 1px solid rgba(255, 255, 255, 0.06);">
+						<div class="text-2xl flex-shrink-0 mt-0.5">{feature.icon}</div>
+						<div>
+							<div class="font-semibold text-sm text-white">{feature.title}</div>
+							<div class="text-xs text-gray-400 mt-0.5 leading-relaxed">{feature.desc}</div>
 						</div>
-					{/each}
-				{/if}
+					</div>
+				{/each}
 			</div>
 		</div>
 		<div class="flex justify-end pt-3 text-sm font-medium">
 			<button
 				on:click={closeModal}
-				class="px-3.5 py-1.5 text-sm font-medium bg-black hover:bg-gray-900 text-white dark:bg-white dark:text-black dark:hover:bg-gray-100 transition rounded-full"
+				class="px-4 py-2 text-sm font-medium text-white rounded-full transition"
+				style="background: #6961ff; hover: brightness(1.1);"
 			>
-				<span class="relative">{$i18n.t("Okay, Let's Go!")}</span>
+				<span class="relative">🚀 Let's Build</span>
 			</button>
 		</div>
 	</div>
