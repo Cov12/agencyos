@@ -193,3 +193,9 @@ src/routes/(app)/agencyos/
 ├── voice/+page.svelte
 └── ...                         # Other routes
 ```
+
+### class: Directive Restrictions
+- **NEVER** use `class:` directive with Tailwind classes containing `/` (e.g., `class:bg-white/10={cond}`)
+- Svelte's parser interprets `/` as a syntax token and throws "Expected token"
+- **Use ternary in class string instead:** `class="{cond ? 'bg-white/10' : 'hover:bg-white/10'}"`
+- Same applies to `class:` with `[` bracket notation (e.g., `class:bg-[#6961ff]/10={cond}`)

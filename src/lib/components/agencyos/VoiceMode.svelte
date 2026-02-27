@@ -1,6 +1,8 @@
 <script lang="ts">
 	import { goto } from '$app/navigation';
 	import { onDestroy } from 'svelte';
+
+	export let onDismiss: (() => void) | undefined = undefined;
 	import { user } from '$lib/stores';
 	import { activeDeptId, activeDept, activeOrgId } from '$lib/stores/agencyos';
 	import { sendDepartmentChat, sendChiefChat } from '$lib/apis/agencyos';
@@ -251,7 +253,11 @@
 
 	function dismiss() {
 		interruptVoiceMode();
-		goto('/agencyos');
+		if (onDismiss) {
+			onDismiss();
+		} else {
+			goto('/agencyos');
+		}
 	}
 
 	function handleKeydown(e: KeyboardEvent) {

@@ -9,10 +9,11 @@
 	import { getOrganization, createOrganization } from '$lib/apis/agencyos';
 	import { page } from '$app/stores';
 	import { goto } from '$app/navigation';
-	import Tooltip from '$lib/components/common/Tooltip.svelte';
-	import Sidebar from '$lib/components/icons/Sidebar.svelte';
 	import AgencyNav from '$lib/components/agencyos/shared/AgencyNav.svelte';
-	import { agencyNavCollapsed, agencyNavMobile, activeOrg } from '$lib/stores/agencyos';
+	import { agencyNavCollapsed, agencyNavMobile, activeOrg, unreadCount } from '$lib/stores/agencyos';
+	import NotificationCenter from '$lib/components/agencyos/NotificationCenter.svelte';
+
+	let notificationPanelOpen = false;
 
 	const i18n = getContext('i18n');
 
@@ -30,6 +31,8 @@
 	}
 
 	onMount(async () => {
+		// Hide OpenWebUI's default sidebar on AgencyOS routes
+		showSidebar.set(false);
 		loaded = true;
 
 		const token = (($user as { token?: string } | undefined)?.token ?? localStorage.token) as
@@ -76,9 +79,20 @@
 			? 'md:max-w-[calc(100%-var(--sidebar-width))]'
 			: ''} max-w-full bg-[#0f0f13]"
 	>
+		<!-- Mobile Nav Overlay (must be BEFORE nav so nav renders on top) -->
+		{#if $mobile && !$agencyNavCollapsed && !isOverlay}
+			<button
+				class="fixed inset-0 bg-black/50 z-40"
+				on:click={() => agencyNavCollapsed.set(true)}
+				aria-label="Close navigation"
+			/>
+		{/if}
+
 		<!-- AgencyOS Sidebar Nav (hidden on overlay pages) -->
 		{#if !isOverlay}
-			<AgencyNav collapsed={$agencyNavCollapsed} onToggle={toggleNav} />
+			<div class="{$mobile ? 'fixed inset-y-0 left-0 z-50' : ''}">
+				<AgencyNav collapsed={$agencyNavCollapsed} onToggle={toggleNav} onNavigate={() => { if ($mobile) agencyNavCollapsed.set(true); }} />
+			</div>
 		{/if}
 
 		<!-- Main Content Area -->
@@ -86,24 +100,6 @@
 			<!-- Top Bar -->
 			{#if !isOverlay}
 				<nav class="px-4 pt-2 pb-1 flex items-center gap-2 shrink-0 border-b border-white/5">
-					<!-- Mobile: Open WebUI sidebar toggle -->
-					{#if $mobile}
-						<div class="{$showSidebar ? 'md:hidden' : ''} self-center flex flex-none items-center">
-							<Tooltip
-								content={$showSidebar ? $i18n.t('Close Sidebar') : $i18n.t('Open Sidebar')}
-								interactive={true}
-							>
-								<button
-									id="sidebar-toggle-button"
-									class="cursor-pointer flex rounded-lg hover:bg-white/10 transition p-1.5"
-									on:click={() => showSidebar.set(!$showSidebar)}
-								>
-									<Sidebar />
-								</button>
-							</Tooltip>
-						</div>
-					{/if}
-
 					<!-- AgencyOS nav toggle (when collapsed or mobile) -->
 					{#if $agencyNavCollapsed}
 						<button
@@ -126,9 +122,31 @@
 					</div>
 
 					<div class="ml-auto flex items-center gap-2">
-						<!-- Quick actions could go here -->
+						<button
+							class="relative p-2 rounded-lg transition-all {notificationPanelOpen ? 'bg-white/10 text-white' : 'text-slate-400 hover:bg-white/10 hover:text-white'}"
+							on:click={() => (notificationPanelOpen = !notificationPanelOpen)}
+						>
+							<span class="material-symbols-outlined text-[20px]">notifications</span>
+							{#if $unreadCount > 0}
+								<span class="absolute -top-0.5 -right-0.5 bg-red-500 text-white text-[9px] font-bold min-w-[16px] h-4 flex items-center justify-center rounded-full px-1">
+									{$unreadCount}
+								</span>
+							{/if}
+						</button>
 					</div>
 				</nav>
+			{/if}
+
+			<!-- Notification Slide-out Panel -->
+			{#if notificationPanelOpen}
+				<button
+					class="fixed inset-0 z-30 bg-black/30"
+					on:click={() => (notificationPanelOpen = false)}
+					aria-label="Close notifications"
+				/>
+				<div class="fixed top-0 right-0 z-40 h-full w-full max-w-md shadow-2xl shadow-black/50 border-l border-white/5 bg-[#0f0f13] overflow-y-auto">
+					<NotificationCenter />
+				</div>
 			{/if}
 
 			<!-- Page Content -->
@@ -147,13 +165,6 @@
 			</div>
 		</div>
 
-		<!-- Mobile Nav Overlay -->
-		{#if $mobile && !$agencyNavCollapsed && !isOverlay}
-			<button
-				class="fixed inset-0 bg-black/50 z-40"
-				on:click={() => agencyNavCollapsed.set(true)}
-				aria-label="Close navigation"
-			/>
-		{/if}
+
 	</div>
 {/if}

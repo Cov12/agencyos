@@ -43,3 +43,11 @@ export const navItems: NavItem[] = [
 	{ label: 'Departments', href: '/agencyos/departments', icon: 'domain' },
 	{ label: 'Settings', href: '/agencyos/settings', icon: 'settings' },
 ];
+
+/** OpenWebUI features integrated into AgencyOS nav */
+export const toolItems: NavItem[] = [
+	{ label: 'New Chat', href: '/', icon: 'add_comment' },
+	{ label: 'Search', href: '/', icon: 'search' },
+	{ label: 'Notes', href: '/', icon: 'sticky_note_2' },
+	{ label: 'Workspace', href: '/workspace', icon: 'workspaces' },
+];

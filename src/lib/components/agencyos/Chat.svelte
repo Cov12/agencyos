@@ -4,6 +4,9 @@
 	import { sendChiefChat, sendDepartmentChat, type Proposal as ApiProposal } from '$lib/apis/agencyos';
 	import GlassPanel from '$lib/components/agencyos/shared/GlassPanel.svelte';
 	import MaterialIcon from '$lib/components/agencyos/shared/MaterialIcon.svelte';
+	import VoiceMode from '$lib/components/agencyos/VoiceMode.svelte';
+
+	let voiceModeOpen = false;
 
 	interface ChatMessage {
 		id: string;
@@ -313,7 +316,7 @@
 						}}
 					></textarea>
 					<div class="flex items-center gap-1.5 sm:gap-2 mb-0.5 flex-shrink-0">
-						<button type="button" class="relative h-11 w-11 flex items-center justify-center rounded-xl bg-white/5 hover:bg-white/10 transition-all">
+						<button type="button" class="relative h-11 w-11 flex items-center justify-center rounded-xl bg-white/5 hover:bg-white/10 transition-all" on:click={() => (voiceModeOpen = true)}>
 							<MaterialIcon icon="mic" class="text-[#20B2AA]" />
 						</button>
 						<button type="submit" disabled={loading || !messageInput.trim()} class="h-11 w-11 flex items-center justify-center rounded-xl bg-[#6961ff] hover:bg-[#5851d8] text-white transition-all shadow-lg shadow-[#6961ff]/20 disabled:opacity-50 disabled:cursor-not-allowed">
@@ -325,6 +328,10 @@
 		</div>
 	</main>
 </div>
+
+{#if voiceModeOpen}
+	<VoiceMode onDismiss={() => (voiceModeOpen = false)} />
+{/if}
 
 <style>
 	.scrollbar-hide::-webkit-scrollbar { display: none; }

@@ -383,7 +383,9 @@
 					</div>
 				{/if}
 
+				{#if !$page.url.pathname.startsWith('/agencyos')}
 				<Sidebar />
+			{/if}
 
 				{#if loaded}
 					<slot />

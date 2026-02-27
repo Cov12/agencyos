@@ -48,9 +48,7 @@
 
 <div class="relative">
 	<button
-		class="flex items-center gap-2 sm:gap-2.5 rounded-xl px-3 sm:px-3.5 md:px-4 py-2.5 md:py-3 text-sm md:text-base font-medium transition-colors min-h-[44px]"
-		class:bg-white/10={open}
-		class:hover:bg-white/10={!open}
+		class="flex items-center gap-2 sm:gap-2.5 rounded-xl px-3 sm:px-3.5 md:px-4 py-2.5 md:py-3 text-sm md:text-base font-medium transition-colors min-h-[44px] {open ? 'bg-white/10' : 'hover:bg-white/10'}"
 		on:click={() => (open = !open)}
 	>
 		<span class="text-lg md:text-xl">{activeDept ? getIcon(activeDept.id) : '🏢'}</span>
@@ -76,9 +74,7 @@
 		>
 			<!-- Chief AI -->
 			<button
-				class="flex w-full items-center gap-3 md:gap-3.5 px-4 md:px-5 py-3.5 md:py-4 text-left transition-colors min-h-[52px] md:min-h-[56px]"
-				class:bg-white/10={$activeDeptId === 'chief'}
-				class:hover:bg-white/10={$activeDeptId !== 'chief'}
+				class="flex w-full items-center gap-3 md:gap-3.5 px-4 md:px-5 py-3.5 md:py-4 text-left transition-colors min-h-[52px] md:min-h-[56px] {$activeDeptId === 'chief' ? 'bg-white/10' : 'hover:bg-white/10'}"
 				on:click={() => selectDepartment(CHIEF_AI)}
 			>
 				<span class="text-2xl md:text-[1.65rem] shrink-0">🧠</span>
@@ -95,9 +91,7 @@
 
 			{#each $departments as dept}
 				<button
-					class="flex w-full items-center gap-3 md:gap-3.5 px-4 md:px-5 py-3.5 md:py-4 text-left transition-colors min-h-[52px] md:min-h-[56px]"
-					class:bg-white/10={$activeDeptId === dept.id}
-					class:hover:bg-white/10={$activeDeptId !== dept.id}
+					class="flex w-full items-center gap-3 md:gap-3.5 px-4 md:px-5 py-3.5 md:py-4 text-left transition-colors min-h-[52px] md:min-h-[56px] {$activeDeptId === dept.id ? 'bg-white/10' : 'hover:bg-white/10'}"
 					on:click={() => selectDepartment(dept)}
 				>
 					<span class="text-2xl md:text-[1.65rem] shrink-0">{getIcon(dept.id)}</span>

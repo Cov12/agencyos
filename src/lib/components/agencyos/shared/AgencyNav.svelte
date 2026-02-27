@@ -1,16 +1,18 @@
 <script lang="ts">
 	import { page } from '$app/stores';
-	import { navItems } from './DesignTokens';
+	import { navItems, toolItems } from './DesignTokens';
 
 	export let collapsed = false;
 	export let onToggle: (() => void) | undefined = undefined;
+	export let onNavigate: (() => void) | undefined = undefined;
 
 	$: currentPath = $page.url.pathname;
 
-	function isActive(href: string): boolean {
-		if (href === '/agencyos') return currentPath === '/agencyos';
-		return currentPath.startsWith(href);
-	}
+	// Force Svelte to re-evaluate nav items when path changes
+	$: activeHref = navItems.find((item) => {
+		if (item.href === '/agencyos') return currentPath === '/agencyos';
+		return currentPath.startsWith(item.href);
+	})?.href ?? '';
 </script>
 
 <aside
@@ -36,24 +38,42 @@
 	</div>
 
 	<!-- Navigation Items -->
-	<nav class="flex-1 px-3 py-2 space-y-1 overflow-y-auto">
-		{#each navItems as item}
-			<a
-				class="flex items-center gap-3 px-3 py-2.5 rounded-lg transition-all group
-					{isActive(item.href)
-						? 'bg-[#6961ff]/10 text-[#6961ff] border border-[#6961ff]/20'
-						: 'text-slate-400 hover:bg-white/5 hover:text-white border border-transparent'}"
-				href={item.href}
-			>
-				<span class="material-symbols-outlined text-[20px]">{item.icon}</span>
-				<span class="text-sm font-medium">{item.label}</span>
-				{#if item.badge}
-					<span class="ml-auto bg-red-500 text-white text-[10px] font-bold px-1.5 py-0.5 rounded-full">
-						{item.badge}
-					</span>
-				{/if}
-			</a>
-		{/each}
+	<nav class="flex-1 px-3 py-2 overflow-y-auto">
+		<div class="space-y-1">
+			{#each navItems as item}
+				<a
+					class="flex items-center gap-3 px-3 py-2.5 rounded-lg transition-all group
+						{activeHref === item.href
+							? 'bg-[#6961ff]/10 text-[#6961ff] border border-[#6961ff]/20'
+							: 'text-slate-400 hover:bg-white/5 hover:text-white border border-transparent'}"
+					href={item.href}
+					on:click={() => onNavigate?.()}
+				>
+					<span class="material-symbols-outlined text-[20px]">{item.icon}</span>
+					<span class="text-sm font-medium">{item.label}</span>
+					{#if item.badge}
+						<span class="ml-auto bg-red-500 text-white text-[10px] font-bold px-1.5 py-0.5 rounded-full">
+							{item.badge}
+						</span>
+					{/if}
+				</a>
+			{/each}
+		</div>
+
+		<!-- Tools & Features (from OpenWebUI) -->
+		<div class="mt-4 pt-4 border-t border-white/5 space-y-1">
+			<p class="px-3 mb-2 text-[10px] font-bold text-slate-500 uppercase tracking-widest">Tools</p>
+			{#each toolItems as item}
+				<a
+					class="flex items-center gap-3 px-3 py-2 rounded-lg transition-all text-slate-400 hover:bg-white/5 hover:text-white border border-transparent"
+					href={item.href}
+					on:click={() => onNavigate?.()}
+				>
+					<span class="material-symbols-outlined text-[20px]">{item.icon}</span>
+					<span class="text-sm font-medium">{item.label}</span>
+				</a>
+			{/each}
+		</div>
 	</nav>
 
 	<!-- User Profile -->

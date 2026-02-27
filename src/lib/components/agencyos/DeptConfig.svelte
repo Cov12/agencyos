@@ -126,13 +126,7 @@
 			<p class="px-3 text-[11px] font-bold text-slate-500 uppercase tracking-wider mb-2">Departments</p>
 			{#each $departments as dept}
 				<button
-					class="flex items-center justify-between px-3 py-3 rounded-lg w-full transition-all min-h-[44px]"
-					class:bg-[#6961ff]/10={dept.id === $activeDeptId}
-					class:border-[#6961ff]/20={dept.id === $activeDeptId}
-					class:text-white={dept.id === $activeDeptId}
-					class:hover:bg-white/5={dept.id !== $activeDeptId}
-					class:text-slate-400={dept.id !== $activeDeptId}
-					class:hover:text-white={dept.id !== $activeDeptId}
+					class="flex items-center justify-between px-3 py-3 rounded-lg w-full transition-all min-h-[44px] {dept.id === $activeDeptId ? 'bg-[#6961ff]/10 text-white' : 'text-slate-400 hover:bg-white/5 hover:text-white'}"
 					style="border: 1px solid {dept.id === $activeDeptId ? 'rgba(105, 97, 255, 0.2)' : 'transparent'};"
 					on:click={() => { $activeDeptId = dept.id; sidebarOpen = false; }}
 				>
