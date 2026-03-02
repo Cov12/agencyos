@@ -85,7 +85,7 @@
 				class="fixed inset-0 bg-black/50 z-40"
 				on:click={() => agencyNavCollapsed.set(true)}
 				aria-label="Close navigation"
-			/>
+			></button>
 		{/if}
 
 		<!-- AgencyOS Sidebar Nav (hidden on overlay pages) -->
@@ -143,7 +143,7 @@
 					class="fixed inset-0 z-30 bg-black/30"
 					on:click={() => (notificationPanelOpen = false)}
 					aria-label="Close notifications"
-				/>
+				></button>
 				<div class="fixed top-0 right-0 z-40 h-full w-full max-w-md shadow-2xl shadow-black/50 border-l border-white/5 bg-[#0f0f13] overflow-y-auto">
 					<NotificationCenter />
 				</div>
