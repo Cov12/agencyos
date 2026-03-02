@@ -16,6 +16,7 @@ from .routers.proposals import router as proposals_router
 from .routers.organizations import router as organizations_router
 from .routers.workpipe import router as workpipe_router
 from .middleware.tenant import TenantMiddleware
+from .middleware.jwt_auth import JWTAuthMiddleware
 
 logger = logging.getLogger("agencyos")
 
@@ -28,8 +29,9 @@ def mount_agencyos(app: FastAPI) -> None:
         from apps.agencyos.backend.mount import mount_agencyos
         mount_agencyos(app)
     """
-    # Add tenant isolation middleware
+    # Add middleware (order matters — JWT runs first, then tenant)
     app.add_middleware(TenantMiddleware)
+    app.add_middleware(JWTAuthMiddleware)
 
     # Mount API routers
     app.include_router(organizations_router)
@@ -71,4 +73,4 @@ def mount_agencyos(app: FastAPI) -> None:
     except Exception as e:
         logger.warning(f"AgencyOS table creation skipped: {e}")
 
-    logger.info("AgencyOS mounted successfully — 4 routers, tenant middleware active")
+    logger.info("AgencyOS mounted successfully — 4 routers, JWT + tenant middleware active")
