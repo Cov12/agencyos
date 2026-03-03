@@ -26,6 +26,8 @@ from ..models.db import AgencyOSDepartment, AgencyOSKnowledge, AgencyOSOrganizat
 from .model_router import ModelRouter
 from .proposals import ProposalsService
 from .workpipe import WorkPipeService
+from .crm_adapter import get_crm_adapter, CRMAdapterError
+from .engines.sales_admin import SalesAdminEngine
 
 logger = logging.getLogger("agencyos.orchestrator")
 
@@ -239,47 +241,38 @@ Set needs_tool=true if the query needs CRM data, calendar, or external system ac
             conversation_history=conversation_history or [],
         )
 
-        # Inject WorkPipe CRM context when enabled on this department
-        if db and self.workpipe.is_connected:
+        # Inject CRM context via department engine (Phase 2B) or legacy bridge
+        if db:
             try:
-                dept_row = db.query(AgencyOSDepartment).filter_by(org_id=org_id, slug=department_slug).first()
                 org_row = db.query(AgencyOSOrganization).filter_by(id=org_id).first()
-                workpipe_modules = (dept_row.workpipe_modules if dept_row else None) or dept_config.get("workpipe_modules", [])
                 sub_account_id = org_row.workpipe_account_id if org_row else None
 
-                if sub_account_id and workpipe_modules:
-                    module_set = set(workpipe_modules)
-                    crm_context: dict = {}
+                if sub_account_id:
+                    crm_context_str = ""
 
-                    # Sales dept modules: contacts + pipelines + deals
-                    if {"contacts", "pipelines", "deals"}.intersection(module_set):
-                        if "deals" in module_set or "pipelines" in module_set:
-                            crm_context["deal_summary"] = await self.workpipe.get_deal_summary(sub_account_id)
-                        if "contacts" in module_set:
-                            crm_context["recent_contacts"] = await self.workpipe.get_contacts(
-                                sub_account_id=sub_account_id,
-                                limit=10,
-                                offset=0,
-                            )
+                    # Use department-specific engine when available
+                    if department_slug == "sales_admin":
+                        try:
+                            # Try CRM adapter (Phase 2B — calls WorkPipe Internal API)
+                            # auth_token would come from request context in production
+                            crm = get_crm_adapter(auth_token="")
+                            engine = SalesAdminEngine(crm=crm)
+                            crm_context_str = await engine.build_crm_context(sub_account_id)
+                        except (CRMAdapterError, Exception) as adapter_err:
+                            logger.info("CRM adapter unavailable, falling back to SQL bridge: %s", adapter_err)
+                            # Fall back to legacy read-only SQL bridge
+                            if self.workpipe.is_connected:
+                                crm_context_str = await self._legacy_crm_context(department_slug, dept_config, sub_account_id)
 
-                    # Customer dept modules: tickets + contacts
-                    if "tickets" in module_set:
-                        crm_context["recent_tickets"] = await self.workpipe.get_recent_tickets(
-                            sub_account_id=sub_account_id,
-                            limit=10,
-                        )
+                    elif self.workpipe.is_connected:
+                        # Other departments: use legacy SQL bridge for now
+                        crm_context_str = await self._legacy_crm_context(department_slug, dept_config, sub_account_id)
 
-                    # Back Office dept modules: invoices + tasks
-                    if "invoices" in module_set:
-                        crm_context["invoice_summary"] = await self.workpipe.get_invoice_summary(sub_account_id)
+                    if crm_context_str:
+                        system_prompt += f"\n\n{crm_context_str}"
 
-                    if crm_context:
-                        system_prompt += (
-                            "\n\n## Current CRM Data\n"
-                            f"{json.dumps(crm_context, indent=2, default=str)}"
-                        )
             except Exception as e:
-                logger.warning("Failed to inject WorkPipe context for %s: %s", department_slug, e)
+                logger.warning("Failed to inject CRM context for %s: %s", department_slug, e)
 
         if intent.get("needs_tool"):
             system_prompt += (
@@ -477,6 +470,34 @@ Set needs_tool=true if the query needs CRM data, calendar, or external system ac
         except Exception as e:
             logger.warning(f"Knowledge retrieval failed: {e}")
             return ""
+
+    async def _legacy_crm_context(
+        self, department_slug: str, dept_config: dict, sub_account_id: str
+    ) -> str:
+        """Legacy CRM context via direct SQL bridge (read-only). Used as fallback."""
+        workpipe_modules = dept_config.get("workpipe_modules", [])
+        module_set = set(workpipe_modules)
+        crm_context: dict = {}
+
+        if {"contacts", "pipelines", "deals"}.intersection(module_set):
+            if "deals" in module_set or "pipelines" in module_set:
+                crm_context["deal_summary"] = await self.workpipe.get_deal_summary(sub_account_id)
+            if "contacts" in module_set:
+                crm_context["recent_contacts"] = await self.workpipe.get_contacts(
+                    sub_account_id=sub_account_id, limit=10, offset=0,
+                )
+
+        if "tickets" in module_set:
+            crm_context["recent_tickets"] = await self.workpipe.get_recent_tickets(
+                sub_account_id=sub_account_id, limit=10,
+            )
+
+        if "invoices" in module_set:
+            crm_context["invoice_summary"] = await self.workpipe.get_invoice_summary(sub_account_id)
+
+        if crm_context:
+            return f"## Current CRM Data\n{json.dumps(crm_context, indent=2, default=str)}"
+        return ""
 
     def _build_department_prompt(self, dept_config: dict, org_id: str) -> str:
         """Build a system prompt scoped to a department's role and capabilities."""

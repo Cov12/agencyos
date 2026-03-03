@@ -9,8 +9,11 @@ from pydantic import BaseModel
 from typing import Optional
 from sqlalchemy.orm import Session
 
+from starlette.requests import Request
+
 from open_webui.internal.db import get_session
 from ..services.proposals import ProposalsService
+from ..services.proposal_executor import ProposalExecutor
 
 router = APIRouter(prefix="/api/agencyos/proposals", tags=["agencyos-proposals"])
 
@@ -145,10 +148,54 @@ async def review_proposal(
     if not proposal:
         raise HTTPException(status_code=404, detail="Proposal not found or not pending")
 
-    # If approved, execute the action
-    if proposal.status == "approved":
-        # TODO: Route to appropriate tool/integration based on action_type
-        # For now, just mark as executed
-        proposal = ProposalsService.mark_executed(db, proposal_id, org_id, {"note": "execution pending integration"})
-
     return {"id": proposal.id, "status": proposal.status}
+
+
+class ExecuteProposalRequest(BaseModel):
+    """Optional overrides for execution."""
+    pass
+
+
+@router.post("/{proposal_id}/execute")
+async def execute_proposal(
+    proposal_id: str,
+    org_id: str,
+    request: Request,
+    db: Session = Depends(get_session),
+):
+    """
+    Execute an approved proposal against the CRM backend.
+
+    Call this after approving a proposal. The executor maps action_type
+    to CRM adapter calls (create contact, move deal, etc.).
+    """
+    proposal = ProposalsService.get_proposal(db, proposal_id, org_id)
+    if not proposal:
+        raise HTTPException(status_code=404, detail="Proposal not found")
+    if proposal.status != "approved":
+        raise HTTPException(
+            status_code=400,
+            detail=f"Proposal is '{proposal.status}', must be 'approved' to execute",
+        )
+
+    # Get auth token from request (Portal JWT or OpenWebUI token)
+    auth_header = request.headers.get("Authorization", "")
+    auth_token = auth_header.replace("Bearer ", "") if auth_header.startswith("Bearer ") else ""
+
+    executor = ProposalExecutor()
+    result = await executor.execute(
+        db=db,
+        proposal=proposal,
+        auth_token=auth_token,
+        executed_by=getattr(request.state, "user_id", "unknown"),
+    )
+
+    if not result["success"]:
+        raise HTTPException(status_code=500, detail=result["error"])
+
+    return {
+        "id": proposal_id,
+        "status": "executed",
+        "action_type": result["action_type"],
+        "result": result["result"],
+    }
