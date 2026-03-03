@@ -19,6 +19,12 @@
 
 	let loaded = false;
 	let orgLoading = true;
+	let authChecking = true;
+
+	// WBIT Portal URL — users are redirected here to authenticate
+	const PORTAL_URL = 'https://portal.wbit.app';
+	// Fallback for dev/staging
+	const PORTAL_LOGIN_URL = `${PORTAL_URL}/sign-in`;
 
 	// Sync mobile state from parent app
 	$: agencyNavMobile.set($mobile);
@@ -30,12 +36,49 @@
 		agencyNavCollapsed.update((v) => !v);
 	}
 
+	/**
+	 * Check for Portal JWT in URL params (returned from Portal after login)
+	 * or in localStorage. If neither exists, redirect to Portal.
+	 */
+	function checkPortalAuth(): string | null {
+		// Check URL for portal_token (Portal redirects back with this)
+		const urlParams = new URLSearchParams(window.location.search);
+		const portalToken = urlParams.get('portal_token');
+		if (portalToken) {
+			localStorage.setItem('portal_token', portalToken);
+			// Clean URL
+			urlParams.delete('portal_token');
+			const cleanUrl = window.location.pathname + (urlParams.toString() ? '?' + urlParams.toString() : '');
+			window.history.replaceState({}, '', cleanUrl);
+			return portalToken;
+		}
+
+		// Check localStorage
+		return localStorage.getItem('portal_token');
+	}
+
+	function redirectToPortal() {
+		const returnUrl = encodeURIComponent(window.location.href);
+		window.location.href = `${PORTAL_LOGIN_URL}?redirect=${returnUrl}`;
+	}
+
 	onMount(async () => {
 		// Hide OpenWebUI's default sidebar on AgencyOS routes
 		showSidebar.set(false);
+
+		// Check Portal authentication
+		const portalToken = checkPortalAuth();
+		if (!portalToken) {
+			// No Portal token — redirect to Portal login
+			redirectToPortal();
+			return;
+		}
+
+		authChecking = false;
 		loaded = true;
 
-		const token = (($user as { token?: string } | undefined)?.token ?? localStorage.token) as
+		// Use Portal token for API calls, fall back to OpenWebUI token
+		const token = portalToken || (($user as { token?: string } | undefined)?.token ?? localStorage.token) as
 			| string
 			| undefined;
 
@@ -73,7 +116,15 @@
 	</title>
 </svelte:head>
 
-{#if loaded}
+{#if authChecking}
+	<!-- Redirecting to Portal for authentication -->
+	<div class="flex items-center justify-center w-full h-screen bg-[#0f0f13]">
+		<div class="text-center">
+			<div class="animate-spin rounded-full h-12 w-12 border-t-2 border-b-2 border-[#6961ff] mx-auto mb-4"></div>
+			<p class="text-white/60 text-sm">Redirecting to login...</p>
+		</div>
+	</div>
+{:else if loaded}
 	<div
 		class="relative flex w-full h-screen max-h-[100dvh] transition-all duration-200 ease-in-out {$showSidebar
 			? 'md:max-w-[calc(100%-var(--sidebar-width))]'
