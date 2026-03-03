@@ -28,6 +28,8 @@ from .proposals import ProposalsService
 from .workpipe import WorkPipeService
 from .crm_adapter import get_crm_adapter, CRMAdapterError
 from .engines.sales_admin import SalesAdminEngine
+from .engines.customer import CustomerEngine
+from .engines.back_office import BackOfficeEngine
 
 logger = logging.getLogger("agencyos.orchestrator")
 
@@ -251,21 +253,23 @@ Set needs_tool=true if the query needs CRM data, calendar, or external system ac
                     crm_context_str = ""
 
                     # Use department-specific engine when available
-                    if department_slug == "sales_admin":
+                    engine_map = {
+                        "sales_admin": SalesAdminEngine,
+                        "customer": CustomerEngine,
+                        "back_office": BackOfficeEngine,
+                    }
+
+                    engine_cls = engine_map.get(department_slug)
+                    if engine_cls:
                         try:
-                            # Try CRM adapter (Phase 2B — calls WorkPipe Internal API)
-                            # auth_token would come from request context in production
                             crm = get_crm_adapter(auth_token="")
-                            engine = SalesAdminEngine(crm=crm)
+                            engine = engine_cls(crm=crm)
                             crm_context_str = await engine.build_crm_context(sub_account_id)
                         except (CRMAdapterError, Exception) as adapter_err:
-                            logger.info("CRM adapter unavailable, falling back to SQL bridge: %s", adapter_err)
-                            # Fall back to legacy read-only SQL bridge
+                            logger.info("CRM adapter unavailable for %s, falling back to SQL bridge: %s", department_slug, adapter_err)
                             if self.workpipe.is_connected:
                                 crm_context_str = await self._legacy_crm_context(department_slug, dept_config, sub_account_id)
-
                     elif self.workpipe.is_connected:
-                        # Other departments: use legacy SQL bridge for now
                         crm_context_str = await self._legacy_crm_context(department_slug, dept_config, sub_account_id)
 
                     if crm_context_str:
