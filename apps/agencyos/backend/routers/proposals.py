@@ -11,7 +11,7 @@ from sqlalchemy.orm import Session
 
 from starlette.requests import Request
 
-from open_webui.internal.db import get_session
+from ..middleware.tenant import get_tenant_session
 from ..services.proposals import ProposalsService
 from ..services.proposal_executor import ProposalExecutor
 
@@ -41,7 +41,7 @@ async def list_proposals(
     department_id: Optional[str] = None,
     limit: int = 50,
     offset: int = 0,
-    db: Session = Depends(get_session),
+    db: Session = Depends(get_tenant_session),
 ):
     """List proposals (approval inbox). Filter by status and/or department."""
     proposals = ProposalsService.list_proposals(
@@ -71,7 +71,7 @@ async def list_proposals(
 @router.get("/stats")
 async def proposal_stats(
     org_id: str,
-    db: Session = Depends(get_session),
+    db: Session = Depends(get_tenant_session),
 ):
     """Get proposal statistics for the org."""
     return ProposalsService.get_stats(db, org_id)
@@ -81,7 +81,7 @@ async def proposal_stats(
 async def get_proposal(
     proposal_id: str,
     org_id: str,
-    db: Session = Depends(get_session),
+    db: Session = Depends(get_tenant_session),
 ):
     """Get a specific proposal."""
     proposal = ProposalsService.get_proposal(db, proposal_id, org_id)
@@ -111,7 +111,7 @@ async def get_proposal(
 async def create_proposal(
     org_id: str,
     data: CreateProposalRequest,
-    db: Session = Depends(get_session),
+    db: Session = Depends(get_tenant_session),
 ):
     """Create a new action proposal (called by AI during chat)."""
     proposal = ProposalsService.create_proposal(
@@ -134,7 +134,7 @@ async def review_proposal(
     org_id: str,
     data: ReviewProposalRequest,
     user_id: str,  # TODO: Extract from auth token
-    db: Session = Depends(get_session),
+    db: Session = Depends(get_tenant_session),
 ):
     """Approve or reject a proposal."""
     if data.status not in ("approved", "rejected"):
@@ -161,7 +161,7 @@ async def execute_proposal(
     proposal_id: str,
     org_id: str,
     request: Request,
-    db: Session = Depends(get_session),
+    db: Session = Depends(get_tenant_session),
 ):
     """
     Execute an approved proposal against the CRM backend.

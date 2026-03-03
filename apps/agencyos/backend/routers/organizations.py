@@ -9,7 +9,7 @@ from pydantic import BaseModel
 from typing import Optional
 from sqlalchemy.orm import Session
 
-from open_webui.internal.db import get_session
+from ..middleware.tenant import get_tenant_session
 from ..services.organizations import OrganizationsService
 
 router = APIRouter(prefix="/api/agencyos/orgs", tags=["agencyos-organizations"])
@@ -31,7 +31,7 @@ class AddMemberRequest(BaseModel):
 @router.post("/")
 async def create_organization(
     data: CreateOrgRequest,
-    db: Session = Depends(get_session),
+    db: Session = Depends(get_tenant_session),
 ):
     """Create a new organization with default departments."""
     existing = OrganizationsService.get_org_by_slug(db, data.slug)
@@ -54,7 +54,7 @@ async def create_organization(
 @router.get("/{org_id}")
 async def get_organization(
     org_id: str,
-    db: Session = Depends(get_session),
+    db: Session = Depends(get_tenant_session),
 ):
     """Get organization details."""
     org = OrganizationsService.get_org_by_id(db, org_id)
@@ -66,7 +66,7 @@ async def get_organization(
 @router.get("/{org_id}/members")
 async def list_members(
     org_id: str,
-    db: Session = Depends(get_session),
+    db: Session = Depends(get_tenant_session),
 ):
     """List organization members."""
     members = OrganizationsService.list_members(db, org_id)
@@ -83,7 +83,7 @@ async def list_members(
 async def add_member(
     org_id: str,
     data: AddMemberRequest,
-    db: Session = Depends(get_session),
+    db: Session = Depends(get_tenant_session),
 ):
     """Add a member to an organization."""
     org = OrganizationsService.get_org_by_id(db, org_id)

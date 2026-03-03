@@ -9,7 +9,7 @@ from pydantic import BaseModel
 from typing import Optional
 from sqlalchemy.orm import Session
 
-from open_webui.internal.db import get_session
+from ..middleware.tenant import get_tenant_session
 from ..models.db import AgencyOSDepartment
 from ..services.orchestrator import Orchestrator
 
@@ -36,7 +36,7 @@ class ChatRequest(BaseModel):
 @router.get("/")
 async def list_departments(
     org_id: str,
-    db: Session = Depends(get_session),
+    db: Session = Depends(get_tenant_session),
 ):
     """List all departments for an organization."""
     departments = db.query(AgencyOSDepartment).filter_by(org_id=org_id, is_active=True).all()
@@ -60,7 +60,7 @@ async def list_departments(
 async def get_department(
     department_id: str,
     org_id: str,
-    db: Session = Depends(get_session),
+    db: Session = Depends(get_tenant_session),
 ):
     """Get department details."""
     dept = db.query(AgencyOSDepartment).filter_by(id=department_id, org_id=org_id).first()
@@ -83,7 +83,7 @@ async def department_chat(
     department_slug: str,
     org_id: str,
     data: ChatRequest,
-    db: Session = Depends(get_session),
+    db: Session = Depends(get_tenant_session),
     orchestrator: Orchestrator = Depends(get_orchestrator),
 ):
     """Send a message to a department's AI."""
@@ -103,7 +103,7 @@ async def department_chat(
 async def chief_chat(
     org_id: str,
     data: ChatRequest,
-    db: Session = Depends(get_session),
+    db: Session = Depends(get_tenant_session),
     orchestrator: Orchestrator = Depends(get_orchestrator),
 ):
     """Send a message to the Chief AI (cross-department reasoning)."""

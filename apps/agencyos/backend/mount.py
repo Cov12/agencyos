@@ -15,8 +15,11 @@ from .routers.departments import router as departments_router
 from .routers.proposals import router as proposals_router
 from .routers.organizations import router as organizations_router
 from .routers.workpipe import router as workpipe_router
+from .routers.email_ingest import router as email_router
 from .middleware.tenant import TenantMiddleware
 from .middleware.jwt_auth import JWTAuthMiddleware
+from .middleware.rate_limiter import RateLimiterMiddleware
+from .middleware.error_handler import ErrorHandlerMiddleware
 
 logger = logging.getLogger("agencyos")
 
@@ -29,15 +32,19 @@ def mount_agencyos(app: FastAPI) -> None:
         from apps.agencyos.backend.mount import mount_agencyos
         mount_agencyos(app)
     """
-    # Add middleware (order matters — JWT runs first, then tenant)
+    # Add middleware (order: outermost runs first)
+    # Error handler → Rate limiter → JWT auth → Tenant context
     app.add_middleware(TenantMiddleware)
     app.add_middleware(JWTAuthMiddleware)
+    app.add_middleware(RateLimiterMiddleware, rpm=100)
+    app.add_middleware(ErrorHandlerMiddleware)
 
     # Mount API routers
     app.include_router(organizations_router)
     app.include_router(departments_router)
     app.include_router(proposals_router)
     app.include_router(workpipe_router)
+    app.include_router(email_router)
 
     # Health check
     @app.get("/api/agencyos/health")
@@ -45,7 +52,7 @@ def mount_agencyos(app: FastAPI) -> None:
         return {
             "status": "ok",
             "service": "agencyos",
-            "version": "0.1.0",
+            "version": "0.2.0",
         }
 
     # Ensure AgencyOS tables exist (create if missing)
@@ -73,4 +80,4 @@ def mount_agencyos(app: FastAPI) -> None:
     except Exception as e:
         logger.warning(f"AgencyOS table creation skipped: {e}")
 
-    logger.info("AgencyOS mounted successfully — 4 routers, JWT + tenant middleware active")
+    logger.info("AgencyOS mounted — 5 routers, 4 middleware layers (error/rate/jwt/tenant)")
