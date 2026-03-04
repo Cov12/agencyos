@@ -38,7 +38,8 @@ def mount_agencyos(app: FastAPI) -> None:
     # Error handler → Rate limiter → Auth redirect → JWT auth → Tenant context
     app.add_middleware(TenantMiddleware)
     app.add_middleware(JWTAuthMiddleware)
-    app.add_middleware(AuthRedirectMiddleware)
+    # TODO: Re-enable once portal.wbit.app is live with Clerk
+    # app.add_middleware(AuthRedirectMiddleware)
     app.add_middleware(RateLimiterMiddleware, rpm=100)
     app.add_middleware(ErrorHandlerMiddleware)
 

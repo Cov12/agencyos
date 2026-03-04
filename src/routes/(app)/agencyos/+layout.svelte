@@ -66,21 +66,18 @@
 		// Hide OpenWebUI's default sidebar on AgencyOS routes
 		showSidebar.set(false);
 
-		// Check Portal authentication OR OpenWebUI session
+		// Check for Portal token (future: portal.wbit.app handles auth)
 		const portalToken = checkPortalAuth();
-		const owuiToken = (($user as { token?: string } | undefined)?.token ?? localStorage.getItem('token')) as string | undefined;
 
-		if (!portalToken && !owuiToken) {
-			// No tokens at all — redirect to Portal login
-			redirectToPortal();
-			return;
-		}
-
+		// TODO: Re-enable portal redirect once portal.wbit.app is live with Clerk
+		// For now, accept any valid session (Portal token OR OpenWebUI token)
 		authChecking = false;
 		loaded = true;
 
 		// Use Portal token first, fall back to OpenWebUI token
-		const token = portalToken || owuiToken;
+		const token = portalToken || (($user as { token?: string } | undefined)?.token ?? localStorage.token) as
+			| string
+			| undefined;
 
 		if (!token) {
 			orgLoading = false;
