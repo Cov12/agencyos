@@ -122,13 +122,33 @@ export const createOrganization = async (
 };
 
 export const getOrganizationForUser = async (token: string) => {
-	// TODO: Backend endpoint to look up org by authenticated user
-	// For now, fall back to 'default' org
+	// TODO: Backend endpoint to look up org by authenticated user membership
+	// Try stored org first, then list all orgs and take the first one
 	try {
-		return await getOrganization(token, 'default');
+		const storedOrgId = typeof localStorage !== 'undefined' ? localStorage.getItem('agencyos-org-id') : null;
+		if (storedOrgId) {
+			try {
+				const org = await getOrganization(token, storedOrgId);
+				return org;
+			} catch {
+				// Stored org no longer valid, clear and try listing
+				localStorage.removeItem('agencyos-org-id');
+			}
+		}
+		// Fallback: list orgs and use first available
+		const orgs = await listOrganizations(token);
+		if (orgs && orgs.length > 0) {
+			localStorage.setItem('agencyos-org-id', orgs[0].id);
+			return orgs[0];
+		}
+		return null;
 	} catch {
 		return null;
 	}
+};
+
+export const listOrganizations = async (token: string) => {
+	return apiCall<Organization[]>(`${AGENCYOS_API_BASE}/orgs/`, token);
 };
 
 export const getOrgMembers = async (token: string, orgId: string) => {

@@ -6,7 +6,7 @@
 		user,
 		mobile
 	} from '$lib/stores';
-	import { getOrganization, createOrganization } from '$lib/apis/agencyos';
+	import { getOrganizationForUser, createOrganization } from '$lib/apis/agencyos';
 	import { page } from '$app/stores';
 	import { goto } from '$app/navigation';
 	import AgencyNav from '$lib/components/agencyos/shared/AgencyNav.svelte';
@@ -85,19 +85,23 @@
 		}
 
 		try {
-			// TODO: Support multi-org — load user's org from membership lookup
-			const organization = await getOrganization(token, 'default');
-			activeOrg.set(organization);
-		} catch (error) {
-			try {
-				const created = await createOrganization(token, {
-					name: 'My Organization',
-					slug: 'default'
-				});
-				activeOrg.set(created.organization);
-			} catch (createError) {
-				console.error('Failed to resolve organization context', createError ?? error);
+			const organization = await getOrganizationForUser(token);
+			if (organization) {
+				activeOrg.set(organization);
+			} else {
+				// No org exists — create a default one
+				try {
+					const created = await createOrganization(token, {
+						name: 'My Organization',
+						slug: 'default'
+					});
+					activeOrg.set(created.organization);
+				} catch (createError) {
+					console.error('Failed to create default organization', createError);
+				}
 			}
+		} catch (error) {
+			console.error('Failed to resolve organization context', error);
 		} finally {
 			orgLoading = false;
 		}

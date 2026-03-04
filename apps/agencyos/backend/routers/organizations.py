@@ -28,6 +28,18 @@ class AddMemberRequest(BaseModel):
     department_ids: list[str] = []
 
 
+@router.get("/")
+async def list_organizations(
+    db: Session = Depends(get_tenant_session),
+):
+    """List all organizations (for user org resolution)."""
+    orgs = OrganizationsService.list_orgs(db)
+    return [
+        {"id": o.id, "name": o.name, "slug": o.slug, "plan": o.plan}
+        for o in orgs
+    ]
+
+
 @router.post("/")
 async def create_organization(
     data: CreateOrgRequest,
