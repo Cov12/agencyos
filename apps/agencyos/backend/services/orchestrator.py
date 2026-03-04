@@ -30,6 +30,7 @@ from .crm_adapter import get_crm_adapter, CRMAdapterError
 from .engines.sales_admin import SalesAdminEngine
 from .engines.customer import CustomerEngine
 from .engines.back_office import BackOfficeEngine
+from .intent_classifier import intent_classifier
 
 logger = logging.getLogger("agencyos.orchestrator")
 
@@ -115,90 +116,58 @@ class Orchestrator:
         conversation_history: list[dict] = None,
     ) -> dict:
         """
-        Use local model (Gemma 9B) to classify intent and complexity.
+        Classify intent using the standalone IntentClassifier service.
 
-        Returns:
-            Dict containing intent, complexity, needs_tool, department,
-            can_handle, suggested_response, and internal classification status.
+        Delegates to the dedicated IntentClassifier which handles prompt
+        building, model routing (Gemma 9B local), and robust JSON parsing.
+        Returns a dict compatible with the orchestrator's routing logic.
         """
-        classification_prompt = """You are an intent classifier for an AI department system.
-Analyze the user message and output ONLY a JSON object (no other text):
-{
-    "intent": "brief intent label",
-    "complexity": <1-5 integer>,
-    "needs_tool": <true/false>,
-    "department": "<relevant department slug>",
-    "can_handle": <true/false>,
-    "suggested_response": "<if can_handle is true, provide a helpful response>"
-}
+        try:
+            result = await intent_classifier.classify(
+                message=message,
+                department_slug=department_slug,
+                conversation_history=conversation_history,
+            )
 
-Complexity guide:
-1 = greeting, simple yes/no, status check
-2 = single fact lookup, simple Q&A
-3 = multi-step reasoning, comparison, analysis
-4 = proposal drafting, document analysis, cross-reference
-5 = strategic planning, cross-department coordination
+            # Convert IntentResult dataclass to dict for backward compat
+            classified = {
+                "intent": result.intent,
+                "complexity": result.complexity,
+                "needs_tool": result.needs_tool,
+                "department": result.department,
+                "can_handle": result.can_handle_locally,
+                "suggested_response": result.suggested_response or "",
+                "confidence": result.confidence,
+                "escalation_reason": result.escalation_reason,
+                "_classification_failed": False,
+            }
 
-Set can_handle=true ONLY for complexity 1-2 (simple queries you can answer directly).
-Set can_handle=false for complexity 3+ (needs a more capable model).
-Set needs_tool=true if the query needs CRM data, calendar, or external system access."""
+            # Track routing stats
+            if result.can_handle_locally:
+                self.routing_stats["local"] += 1
+            elif result.complexity <= 3:
+                self.routing_stats["mid"] += 1
+            else:
+                self.routing_stats["premium"] += 1
 
-        messages = [{"role": "user", "content": message}]
+            return classified
 
-        result = await self.model_router.generate(
-            tier="local",
-            messages=messages,
-            system_prompt=classification_prompt,
-        )
-
-        content = result.get("content", "")
-
-        # Attempt robust parsing from potentially messy local model output
-        candidates: list[str] = []
-        stripped = content.strip()
-        if stripped:
-            candidates.append(stripped)
-
-        fenced_json = re.findall(r"```(?:json)?\s*(\{.*?\})\s*```", content, re.DOTALL)
-        candidates.extend(fenced_json)
-
-        first_brace = content.find("{")
-        last_brace = content.rfind("}")
-        if first_brace != -1 and last_brace != -1 and last_brace > first_brace:
-            candidates.append(content[first_brace : last_brace + 1])
-
-        for candidate in candidates:
-            try:
-                parsed = json.loads(candidate)
-                if isinstance(parsed, dict):
-                    parsed.setdefault("intent", "unknown")
-                    parsed.setdefault("complexity", 3)
-                    parsed.setdefault("needs_tool", False)
-                    parsed.setdefault("department", department_slug)
-                    parsed.setdefault("can_handle", False)
-                    parsed.setdefault("suggested_response", "")
-                    parsed["complexity"] = max(1, min(5, int(parsed.get("complexity", 3))))
-                    parsed["_classification_failed"] = False
-                    return parsed
-            except (json.JSONDecodeError, TypeError, ValueError):
-                continue
-
-        self.routing_stats["classification_failures"] += 1
-        logger.info(
-            "Intent classification failed; defaulting to escalation path",
-            extra={"department": department_slug},
-        )
-
-        # Default: escalate to mid-tier if classification fails
-        return {
-            "intent": "unknown",
-            "complexity": 3,
-            "needs_tool": False,
-            "department": department_slug,
-            "can_handle": False,
-            "suggested_response": "",
-            "_classification_failed": True,
-        }
+        except Exception as e:
+            self.routing_stats["classification_failures"] += 1
+            logger.warning(
+                "IntentClassifier error, defaulting to escalation: %s", e
+            )
+            return {
+                "intent": "unknown",
+                "complexity": 3,
+                "needs_tool": False,
+                "department": department_slug,
+                "can_handle": False,
+                "suggested_response": "",
+                "confidence": 0.0,
+                "escalation_reason": f"Classification error: {e}",
+                "_classification_failed": True,
+            }
 
     def get_routing_stats(self) -> dict:
         """Return in-memory model routing counters."""

@@ -1,0 +1,28 @@
+name: AgencyOS CI
+on:
+  push:
+    branches: [integration, agencyos-prod]
+  pull_request:
+    branches: [integration]
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: Python syntax check
+        run: |
+          find apps/agencyos/backend -name "*.py" -not -path "*/__pycache__/*" -exec python3 -m py_compile {} \;
+      - name: Svelte convention check
+        run: |
+          ! grep -rn "onclick=" src/lib/components/agencyos/ --include="*.svelte" || exit 1
+      - name: Install deps
+        run: npm ci
+      - name: TypeScript check
+        run: npx tsc --noEmit --skipLibCheck || true

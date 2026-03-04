@@ -16,10 +16,12 @@ from .routers.proposals import router as proposals_router
 from .routers.organizations import router as organizations_router
 from .routers.workpipe import router as workpipe_router
 from .routers.email_ingest import router as email_router
+from .routers.voice import router as voice_router
 from .middleware.tenant import TenantMiddleware
 from .middleware.jwt_auth import JWTAuthMiddleware
 from .middleware.rate_limiter import RateLimiterMiddleware
 from .middleware.error_handler import ErrorHandlerMiddleware
+from .middleware.auth_redirect import AuthRedirectMiddleware
 
 logger = logging.getLogger("agencyos")
 
@@ -33,9 +35,10 @@ def mount_agencyos(app: FastAPI) -> None:
         mount_agencyos(app)
     """
     # Add middleware (order: outermost runs first)
-    # Error handler → Rate limiter → JWT auth → Tenant context
+    # Error handler → Rate limiter → Auth redirect → JWT auth → Tenant context
     app.add_middleware(TenantMiddleware)
     app.add_middleware(JWTAuthMiddleware)
+    app.add_middleware(AuthRedirectMiddleware)
     app.add_middleware(RateLimiterMiddleware, rpm=100)
     app.add_middleware(ErrorHandlerMiddleware)
 
@@ -45,6 +48,7 @@ def mount_agencyos(app: FastAPI) -> None:
     app.include_router(proposals_router)
     app.include_router(workpipe_router)
     app.include_router(email_router)
+    app.include_router(voice_router)
 
     # Health check
     @app.get("/api/agencyos/health")
@@ -52,7 +56,7 @@ def mount_agencyos(app: FastAPI) -> None:
         return {
             "status": "ok",
             "service": "agencyos",
-            "version": "0.2.0",
+            "version": "0.3.0",
         }
 
     # Ensure AgencyOS tables exist (create if missing)
@@ -80,4 +84,4 @@ def mount_agencyos(app: FastAPI) -> None:
     except Exception as e:
         logger.warning(f"AgencyOS table creation skipped: {e}")
 
-    logger.info("AgencyOS mounted — 5 routers, 4 middleware layers (error/rate/jwt/tenant)")
+    logger.info("AgencyOS mounted — 6 routers, 5 middleware layers (error/rate/auth-redirect/jwt/tenant)")
