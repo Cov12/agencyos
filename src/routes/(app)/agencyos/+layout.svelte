@@ -66,10 +66,12 @@
 		// Hide OpenWebUI's default sidebar on AgencyOS routes
 		showSidebar.set(false);
 
-		// Check Portal authentication
+		// Check Portal authentication OR OpenWebUI session
 		const portalToken = checkPortalAuth();
-		if (!portalToken) {
-			// No Portal token — redirect to Portal login
+		const owuiToken = (($user as { token?: string } | undefined)?.token ?? localStorage.getItem('token')) as string | undefined;
+
+		if (!portalToken && !owuiToken) {
+			// No tokens at all — redirect to Portal login
 			redirectToPortal();
 			return;
 		}
@@ -77,10 +79,8 @@
 		authChecking = false;
 		loaded = true;
 
-		// Use Portal token for API calls, fall back to OpenWebUI token
-		const token = portalToken || (($user as { token?: string } | undefined)?.token ?? localStorage.token) as
-			| string
-			| undefined;
+		// Use Portal token first, fall back to OpenWebUI token
+		const token = portalToken || owuiToken;
 
 		if (!token) {
 			orgLoading = false;
