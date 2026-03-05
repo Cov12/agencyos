@@ -72,7 +72,8 @@
 		if (!token) throw new Error('Missing auth token. Please sign in again.');
 		if (!orgId) throw new Error('Missing organization context.');
 
-		return `ws://${location.host}/api/agencyos/voice/ws?token=${encodeURIComponent(token)}&org_id=${encodeURIComponent(orgId)}&department_slug=${encodeURIComponent(deptSlug ?? 'chief')}`;
+		const protocol = location.protocol === 'https:' ? 'wss' : 'ws';
+		return `${protocol}://${location.host}/api/agencyos/voice/ws?token=${encodeURIComponent(token)}&org_id=${encodeURIComponent(orgId)}&department_slug=${encodeURIComponent(deptSlug ?? 'chief')}`;
 	}
 
 	function connectWebSocket() {
