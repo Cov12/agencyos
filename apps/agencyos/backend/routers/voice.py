@@ -84,7 +84,7 @@ def _trim_history(history: list[dict[str, str]], max_turns: int = 20) -> list[di
     return history[-max_turns:]
 
 
-async def _transcribe_audio(client: httpx.AsyncClient, audio_bytes: bytes) -> str:
+async def _transcribe_audio(client: httpx.AsyncClient, audio_bytes: bytes, token: str = "") -> str:
     """Send audio bytes to Whisper transcription endpoint."""
     files = {
         "file": ("voice.webm", audio_bytes, "audio/webm"),
@@ -92,10 +92,14 @@ async def _transcribe_audio(client: httpx.AsyncClient, audio_bytes: bytes) -> st
     data = {
         "model": "whisper-1",
     }
+    headers: dict[str, str] = {}
+    if token:
+        headers["Authorization"] = f"Bearer {token}"
     resp = await client.post(
         "http://localhost:8080/api/v1/audio/transcriptions",
         data=data,
         files=files,
+        headers=headers,
         timeout=120.0,
     )
     resp.raise_for_status()
@@ -104,8 +108,11 @@ async def _transcribe_audio(client: httpx.AsyncClient, audio_bytes: bytes) -> st
     return str(text).strip()
 
 
-async def _synthesize_speech(client: httpx.AsyncClient, content: str) -> str:
+async def _synthesize_speech(client: httpx.AsyncClient, content: str, token: str = "") -> str:
     """Generate TTS audio and return it as base64 string."""
+    headers: dict[str, str] = {}
+    if token:
+        headers["Authorization"] = f"Bearer {token}"
     resp = await client.post(
         "http://localhost:8080/api/v1/audio/speech",
         json={
@@ -114,6 +121,7 @@ async def _synthesize_speech(client: httpx.AsyncClient, content: str) -> str:
             "input": content,
             "response_format": "mp3",
         },
+        headers=headers,
         timeout=120.0,
     )
     resp.raise_for_status()
@@ -209,6 +217,8 @@ async def voice_ws(websocket: WebSocket) -> None:
     orchestrator = get_orchestrator()
     audio_chunks: list[bytes] = []
     conversation_history: list[dict[str, str]] = []
+    # Preserve original token for internal API calls (STT/TTS auth)
+    auth_token = payload.get("token") or token
 
     logger.info(
         "Voice WS connected: org_id=%s user_id=%s department=%s",
@@ -251,7 +261,7 @@ async def voice_ws(websocket: WebSocket) -> None:
                         continue
 
                     try:
-                        transcript = await _transcribe_audio(client, b"".join(audio_chunks))
+                        transcript = await _transcribe_audio(client, b"".join(audio_chunks), auth_token)
                     except Exception as exc:
                         logger.exception("STT failed")
                         await _send_error(websocket, f"STT failed: {exc}")
@@ -302,7 +312,7 @@ async def voice_ws(websocket: WebSocket) -> None:
                     conversation_history = _trim_history(conversation_history)
 
                     try:
-                        audio_b64 = await _synthesize_speech(client, response_text)
+                        audio_b64 = await _synthesize_speech(client, response_text, auth_token)
                     except Exception as exc:
                         logger.exception("TTS failed")
                         await _send_error(websocket, f"TTS failed: {exc}")
@@ -354,7 +364,7 @@ async def voice_ws(websocket: WebSocket) -> None:
                     conversation_history = _trim_history(conversation_history)
 
                     try:
-                        audio_b64 = await _synthesize_speech(client, response_text)
+                        audio_b64 = await _synthesize_speech(client, response_text, auth_token)
                     except Exception as exc:
                         logger.exception("TTS failed")
                         await _send_error(websocket, f"TTS failed: {exc}")
