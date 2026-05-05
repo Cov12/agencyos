@@ -10,23 +10,44 @@
 
   onMount(async () => {
     const params = new URLSearchParams(window.location.search);
-    const token = params.get('token');
+    const portalToken = params.get('token');
     const redirectTo = params.get('redirect_to');
 
-    if (!token) {
+    if (!portalToken) {
       error = 'No authentication token was provided. Please sign in again from the portal.';
       loading = false;
       return;
     }
 
     try {
-      localStorage.setItem('token', token);
-      document.cookie = `agencyos_token=${encodeURIComponent(token)}; path=/; max-age=86400`;
+      // Exchange the Portal JWT for a real OWUI session token
+      // Portal JWTs have "sub" (Clerk user ID) but OWUI expects "id" (OWUI user ID)
+      const response = await fetch('/api/v1/auths/portal-exchange', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({ token: portalToken }),
+      });
+
+      if (!response.ok) {
+        const data = await response.json().catch(() => ({}));
+        throw new Error(data.detail || 'Token exchange failed');
+      }
+
+      const session = await response.json();
+
+      // Store the OWUI session token (this one has "id" field)
+      localStorage.setItem('token', session.token);
+
+      // The endpoint already sets the cookie, but set it client-side too for consistency
+      document.cookie = `token=${encodeURIComponent(session.token)}; path=/; max-age=86400; SameSite=Lax`;
 
       const destination = redirectTo && redirectTo.startsWith('/') ? redirectTo : '/agencyos';
       await goto(destination);
     } catch (e) {
-      error = 'We could not complete sign-in. Please try again.';
+      console.error('Auth callback error:', e);
+      error = e instanceof Error ? e.message : 'We could not complete sign-in. Please try again.';
       loading = false;
     }
   });

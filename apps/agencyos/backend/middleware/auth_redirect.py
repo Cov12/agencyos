@@ -125,17 +125,38 @@ class AuthRedirectMiddleware(BaseHTTPMiddleware):
         return path in static_files
 
     def _is_valid_jwt(self, token: str) -> bool:
-        """Validate JWT with HS256 using shared AgencyOS secret."""
-        secret = os.environ.get("AGENCYOS_JWT_SECRET") or os.environ.get("JWT_SECRET", "")
-        if not secret:
-            logger.warning("AGENCYOS_JWT_SECRET/JWT_SECRET not configured")
+        """
+        Validate JWT using either OWUI secret or Portal secret.
+
+        After the portal-exchange flow, tokens are OWUI tokens (signed with WEBUI_SECRET_KEY).
+        Portal tokens (signed with JWT_SECRET) are also accepted for backwards compatibility.
+        """
+        # Try OWUI secret first (this is what the portal-exchange endpoint creates)
+        owui_secret = os.environ.get("WEBUI_SECRET_KEY", "")
+        if owui_secret:
+            try:
+                payload = pyjwt.decode(token, owui_secret, algorithms=[JWT_ALGORITHM])
+                # OWUI tokens have "id" field, Portal tokens have "sub"
+                if "id" in payload:
+                    return True
+            except pyjwt.ExpiredSignatureError:
+                logger.info("OWUI JWT expired during UI auth redirect validation")
+                return False
+            except pyjwt.InvalidTokenError:
+                # Not an OWUI token, try Portal secret
+                pass
+
+        # Fallback: try Portal secret (for Portal JWTs that haven't been exchanged)
+        portal_secret = os.environ.get("AGENCYOS_JWT_SECRET") or os.environ.get("JWT_SECRET", "")
+        if not portal_secret:
+            logger.warning("Neither WEBUI_SECRET_KEY nor JWT_SECRET configured")
             return False
 
         try:
-            pyjwt.decode(token, secret, algorithms=[JWT_ALGORITHM])
+            pyjwt.decode(token, portal_secret, algorithms=[JWT_ALGORITHM])
             return True
         except pyjwt.ExpiredSignatureError:
-            logger.info("JWT expired during UI auth redirect validation")
+            logger.info("Portal JWT expired during UI auth redirect validation")
             return False
         except pyjwt.InvalidTokenError as exc:
             logger.info("Invalid JWT during UI auth redirect validation: %s", exc)
