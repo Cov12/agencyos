@@ -23,6 +23,11 @@ jobs:
         run: |
           ! grep -rn "onclick=" src/lib/components/agencyos/ --include="*.svelte" || exit 1
       - name: Install deps
-        run: npm ci
+        # --legacy-peer-deps required: @tiptap/extension-bubble-menu and
+        # extension-floating-menu are intentionally pinned to v2 (see
+        # src/lib/components/common/RichTextInput.svelte) while the rest of
+        # the tiptap suite is on v3. Drop this flag once both extensions are
+        # bumped to v3.
+        run: npm ci --legacy-peer-deps
       - name: TypeScript check
         run: npx tsc --noEmit --skipLibCheck || true
