@@ -39,15 +39,15 @@ def get_orchestrator() -> Orchestrator:
 
 
 def _jwt_secret() -> str:
-    """Resolve JWT secret from middleware constant or AgencyOS env fallback."""
-    return JWT_SECRET or os.environ.get("AGENCYOS_JWT_SECRET", "")
+    """Resolve JWT secret — shared with WBIT Portal."""
+    return JWT_SECRET or os.environ.get("JWT_SECRET", "")
 
 
 def _decode_ws_token(token: str) -> dict[str, Any]:
     """Decode and validate a WebSocket auth token.
 
     Supports two auth modes:
-    1. Portal JWT (AGENCYOS_JWT_SECRET configured) — full JWT decode
+    1. Portal JWT (JWT_SECRET configured) — full JWT decode
     2. OpenWebUI token fallback — accept token as-is, return minimal payload
 
     Args:

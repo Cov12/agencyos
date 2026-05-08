@@ -147,7 +147,7 @@ class AuthRedirectMiddleware(BaseHTTPMiddleware):
                 pass
 
         # Fallback: try Portal secret (for Portal JWTs that haven't been exchanged)
-        portal_secret = os.environ.get("AGENCYOS_JWT_SECRET") or os.environ.get("JWT_SECRET", "")
+        portal_secret = os.environ.get("JWT_SECRET", "")
         if not portal_secret:
             logger.warning("Neither WEBUI_SECRET_KEY nor JWT_SECRET configured")
             return False
