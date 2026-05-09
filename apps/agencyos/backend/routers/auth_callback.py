@@ -5,8 +5,10 @@ Handles the /agencyos/auth/callback endpoint that receives Portal JWTs
 and exchanges them for OpenWebUI session tokens.
 """
 
+import datetime
 import logging
 import os
+import time
 import uuid
 
 import jwt as pyjwt
@@ -17,9 +19,13 @@ from sqlalchemy.orm import Session
 from open_webui.internal.db import get_session
 from open_webui.models.users import Users
 from open_webui.models.auths import Auths
-from open_webui.utils.auth import get_password_hash
+from open_webui.utils.auth import get_password_hash, create_token
 from open_webui.utils.groups import apply_default_group_assignment
-from open_webui.routers.auths import create_session_response
+from open_webui.utils.misc import parse_duration
+from open_webui.env import (
+    WEBUI_AUTH_COOKIE_SAME_SITE,
+    WEBUI_AUTH_COOKIE_SECURE,
+)
 
 logger = logging.getLogger("agencyos.auth_callback")
 
@@ -131,19 +137,39 @@ async def portal_auth_callback(
             if user.name != name:
                 Users.update_user_by_id(user.id, {"name": name}, db=db)
 
-        # Create session response with cookie
-        response = RedirectResponse(url="/agencyos/", status_code=303)
+        # Create OWUI session token
+        expires_delta = parse_duration(request.app.state.config.JWT_EXPIRES_IN)
+        expires_at = None
+        if expires_delta:
+            expires_at = int(time.time()) + int(expires_delta.total_seconds())
 
-        # Create session and set cookie
-        session_data = create_session_response(
-            request=request,
-            user=user,
-            db=db,
-            response=response,
-            set_cookie=True,
+        owui_token = create_token(
+            data={"id": user.id},
+            expires_delta=expires_delta,
         )
 
-        logger.info(f"Portal auth success: user={user.id}, redirecting to /agencyos/")
+        # Create redirect response
+        response = RedirectResponse(url="/agencyos/", status_code=303)
+
+        # Set cookie with path="/" so it's available on all paths
+        # This is critical because the callback is at /agencyos/auth/callback
+        # but the UI is at /agencyos/
+        datetime_expires_at = (
+            datetime.datetime.fromtimestamp(expires_at, datetime.timezone.utc)
+            if expires_at
+            else None
+        )
+        response.set_cookie(
+            key="token",
+            value=owui_token,
+            expires=datetime_expires_at,
+            httponly=True,
+            samesite=WEBUI_AUTH_COOKIE_SAME_SITE,
+            secure=WEBUI_AUTH_COOKIE_SECURE,
+            path="/",  # Critical: make cookie available on all paths
+        )
+
+        logger.info(f"Portal auth success: user={user.id}, token set with path=/, redirecting to /agencyos/")
         return response
 
     finally:
