@@ -163,7 +163,7 @@ async def portal_auth_callback(
             key="token",
             value=owui_token,
             expires=datetime_expires_at,
-            httponly=True,
+            httponly=False,  # Required for frontend JavaScript to read the token
             samesite=WEBUI_AUTH_COOKIE_SAME_SITE,
             secure=WEBUI_AUTH_COOKIE_SECURE,
             path="/",  # Critical: make cookie available on all paths
