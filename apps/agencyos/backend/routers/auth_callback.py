@@ -18,6 +18,7 @@ from open_webui.internal.db import get_session
 from open_webui.models.users import Users
 from open_webui.models.auths import Auths
 from open_webui.utils.auth import get_password_hash
+from open_webui.utils.groups import apply_default_group_assignment
 from open_webui.routers.auths import create_session_response
 
 logger = logging.getLogger("agencyos.auth_callback")
@@ -40,6 +41,8 @@ async def portal_auth_callback(
     4. Create OpenWebUI session and set cookie
     5. Redirect to /agencyos/
     """
+    logger.info(f"[AuthCallback] Hit /agencyos/auth/callback, token present: {bool(token)}")
+
     if not token:
         logger.warning("Auth callback called without token")
         raise HTTPException(
@@ -115,6 +118,13 @@ async def portal_auth_callback(
                     status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
                     detail="Failed to create user",
                 )
+
+            # Apply default group assignment
+            apply_default_group_assignment(
+                request.app.state.config.DEFAULT_GROUP_ID,
+                user.id,
+                db=db,
+            )
             logger.info(f"Created OWUI user {user.id}")
         else:
             # Update name if changed
