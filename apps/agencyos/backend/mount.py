@@ -17,6 +17,7 @@ from .routers.organizations import router as organizations_router
 from .routers.workpipe import router as workpipe_router
 from .routers.email_ingest import router as email_router
 from .routers.voice import router as voice_router
+from .routers.auth_callback import router as auth_callback_router
 from .middleware.tenant import TenantMiddleware
 from .middleware.jwt_auth import JWTAuthMiddleware
 from .middleware.rate_limiter import RateLimiterMiddleware
@@ -43,6 +44,7 @@ def mount_agencyos(app: FastAPI) -> None:
     app.add_middleware(ErrorHandlerMiddleware)
 
     # Mount API routers
+    app.include_router(auth_callback_router)  # Portal SSO callback
     app.include_router(organizations_router)
     app.include_router(departments_router)
     app.include_router(proposals_router)

@@ -41,38 +41,11 @@ class AuthRedirectMiddleware(BaseHTTPMiddleware):
     async def dispatch(self, request: Request, call_next) -> Response:
         """Validate UI auth token or redirect to Portal sign-in."""
         path = request.url.path
-        logger.info(f"[AuthRedirect] Processing path: {path}")
 
-        # Handle callback path specially - always process token if present
+        # Let the auth callback route handle token exchange
+        # The route at /agencyos/auth/callback will exchange Portal JWT for OWUI session
         if path in self.excluded_paths:
-            query_token = request.query_params.get("token")
-            logger.info(f"[AuthRedirect] Callback path hit, token present: {bool(query_token)}")
-            if query_token:
-                is_valid = self._is_valid_jwt(query_token)
-                logger.info(f"[AuthRedirect] Token validation result: {is_valid}")
-                if is_valid:
-                    # Token is valid - set cookie and redirect to main app
-                    logger.info("[AuthRedirect] Setting cookie and redirecting to /agencyos/")
-                    response = RedirectResponse(
-                        url="/agencyos/",
-                        status_code=303,
-                    )
-                    response.set_cookie(
-                        key=self.cookie_name,
-                        value=query_token,
-                        max_age=self.cookie_max_age,
-                        httponly=True,
-                        secure=True,
-                        samesite="lax",
-                        path="/",
-                    )
-                    return response
-            # No valid token on callback - redirect to portal sign-in
-            logger.info("[AuthRedirect] No valid token, redirecting to portal sign-in")
-            return RedirectResponse(
-                url=self._build_portal_signin_url(request),
-                status_code=307,
-            )
+            return await call_next(request)
 
         if not self._should_handle_request(request):
             return await call_next(request)
