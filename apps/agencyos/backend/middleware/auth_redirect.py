@@ -73,8 +73,14 @@ class AuthRedirectMiddleware(BaseHTTPMiddleware):
         if auth_token and self._is_valid_jwt(auth_token):
             return await call_next(request)
 
+        # Check agencyos_token cookie (Portal JWT)
         cookie_token = request.cookies.get(self.cookie_name)
         if cookie_token and self._is_valid_jwt(cookie_token):
+            return await call_next(request)
+
+        # Also check OpenWebUI "token" cookie (OWUI session from auth callback)
+        owui_token = request.cookies.get("token")
+        if owui_token and self._is_valid_jwt(owui_token):
             return await call_next(request)
 
         return RedirectResponse(
