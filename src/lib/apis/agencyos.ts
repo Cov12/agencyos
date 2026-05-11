@@ -299,3 +299,116 @@ export const getProposalStats = async (token: string, orgId: string) => {
 		token
 	);
 };
+
+// ─── Cortex Approvals ─────────────────────────────────────────
+
+export interface CortexApproval {
+	id: string;
+	type: 'hire_agent' | 'custom';
+	status: 'pending' | 'approved' | 'rejected' | 'revision_requested';
+	payload: Record<string, unknown>;
+	requested_by_agent_id?: string;
+	requested_by_agent_name?: string;
+	decision_note?: string;
+	decided_by_user_id?: string;
+	decided_at?: number;
+	created_at: number;
+	updated_at: number;
+	synced_at: number;
+}
+
+export interface CortexApprovalStats {
+	total: number;
+	pending: number;
+	approved: number;
+	rejected: number;
+	revision_requested: number;
+	hire_agent: number;
+}
+
+export const getCortexApprovals = async (
+	token: string,
+	orgId: string,
+	params?: { status?: string; approval_type?: string; limit?: number; offset?: number }
+) => {
+	const searchParams = new URLSearchParams({ org_id: orgId });
+	if (params?.status) searchParams.append('status', params.status);
+	if (params?.approval_type) searchParams.append('approval_type', params.approval_type);
+	if (params?.limit) searchParams.append('limit', String(params.limit));
+	if (params?.offset) searchParams.append('offset', String(params.offset));
+
+	return apiCall<{ approvals: CortexApproval[]; total: number }>(
+		`${AGENCYOS_API_BASE}/cortex-approvals/?${searchParams.toString()}`,
+		token
+	);
+};
+
+export const getCortexApproval = async (token: string, approvalId: string, orgId: string) => {
+	return apiCall<CortexApproval>(
+		`${AGENCYOS_API_BASE}/cortex-approvals/${approvalId}?org_id=${orgId}`,
+		token
+	);
+};
+
+export const getCortexApprovalStats = async (token: string, orgId: string) => {
+	return apiCall<CortexApprovalStats>(
+		`${AGENCYOS_API_BASE}/cortex-approvals/stats?org_id=${orgId}`,
+		token
+	);
+};
+
+export const getCortexPendingCount = async (token: string, orgId: string) => {
+	return apiCall<{ count: number }>(
+		`${AGENCYOS_API_BASE}/cortex-approvals/pending-count?org_id=${orgId}`,
+		token
+	);
+};
+
+export const approveCortexApproval = async (
+	token: string,
+	approvalId: string,
+	orgId: string,
+	userId: string,
+	data: { decision_note?: string }
+) => {
+	return apiCall<{ id: string; status: string; message: string }>(
+		`${AGENCYOS_API_BASE}/cortex-approvals/${approvalId}/approve?org_id=${orgId}&user_id=${userId}`,
+		token,
+		{
+			method: 'POST',
+			body: JSON.stringify(data)
+		}
+	);
+};
+
+export const rejectCortexApproval = async (
+	token: string,
+	approvalId: string,
+	orgId: string,
+	userId: string,
+	data: { decision_note?: string }
+) => {
+	return apiCall<{ id: string; status: string; message: string }>(
+		`${AGENCYOS_API_BASE}/cortex-approvals/${approvalId}/reject?org_id=${orgId}&user_id=${userId}`,
+		token,
+		{
+			method: 'POST',
+			body: JSON.stringify(data)
+		}
+	);
+};
+
+export const syncCortexApprovals = async (
+	token: string,
+	orgId: string,
+	cortexCompanyId: string
+) => {
+	return apiCall<{ success: boolean; stats: Record<string, number>; message: string }>(
+		`${AGENCYOS_API_BASE}/cortex-approvals/sync?org_id=${orgId}`,
+		token,
+		{
+			method: 'POST',
+			body: JSON.stringify({ cortex_company_id: cortexCompanyId })
+		}
+	);
+};
