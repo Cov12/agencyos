@@ -1,7 +1,15 @@
 <script lang="ts">
-	import { activeDeptId, activeDept, proposals, type Proposal, activeOrgId } from '$lib/stores/agencyos';
+	import { onMount } from 'svelte';
+	import { activeDeptId, activeDept, proposals, type Proposal, activeOrgId, departments } from '$lib/stores/agencyos';
 	import { user } from '$lib/stores';
-	import { sendChiefChat, sendDepartmentChat, type Proposal as ApiProposal } from '$lib/apis/agencyos';
+	import {
+		sendChiefChat,
+		sendDepartmentChat,
+		getDepartments,
+		getEmployeeTabs,
+		type Proposal as ApiProposal,
+		type EmployeeTab
+	} from '$lib/apis/agencyos';
 	import GlassPanel from '$lib/components/agencyos/shared/GlassPanel.svelte';
 	import MaterialIcon from '$lib/components/agencyos/shared/MaterialIcon.svelte';
 	import VoiceMode from '$lib/components/agencyos/VoiceMode.svelte';
@@ -23,16 +31,58 @@
 	let loading = false;
 	let messages: ChatMessage[] = [];
 	let chatId: string | undefined;
+	let employeeTabs: EmployeeTab[] = [];
+	let selectedEmployee: EmployeeTab | null = null;
+	let loadingTabs = false;
 
-
-	const personas = [
-		{ id: 'chief', label: 'Chief AI', icon: 'psychology' },
-		{ id: 'sales', label: 'Sales', icon: 'trending_up' },
-		{ id: 'customer', label: 'Customer', icon: 'support_agent' },
-		{ id: 'backoffice', label: 'Back Office', icon: 'inventory_2' }
+	// Dynamic personas: Chief + departments from store
+	$: personas = [
+		{ id: 'chief', label: 'Chief AI', icon: 'psychology', type: 'chief' as const },
+		...$departments.map((d) => ({
+			id: d.id,
+			label: d.name,
+			icon: d.icon,
+			type: 'department' as const
+		}))
 	];
 
 	$: if (!$activeDeptId) $activeDeptId = 'chief';
+
+	// Load employee tabs on mount
+	onMount(async () => {
+		await loadEmployeeTabs();
+	});
+
+	async function loadEmployeeTabs() {
+		const authToken = (($user as { token?: string } | undefined)?.token ?? localStorage.token) as string | undefined;
+		const userId = $user?.id;
+		if (!authToken || !userId || !$activeOrgId) return;
+
+		loadingTabs = true;
+		try {
+			const response = await getEmployeeTabs(authToken, $activeOrgId, userId, true);
+			employeeTabs = response.tabs;
+		} catch (error) {
+			console.error('Failed to load employee tabs', error);
+		} finally {
+			loadingTabs = false;
+		}
+	}
+
+	function selectEmployee(tab: EmployeeTab) {
+		selectedEmployee = tab;
+		// Reset messages when switching employees
+		messages = [];
+		chatId = undefined;
+	}
+
+	function clearEmployeeSelection() {
+		selectedEmployee = null;
+	}
+
+	// Derived chat target info
+	$: chatTargetName = selectedEmployee?.agent_name ?? $activeDept?.name ?? 'Chief AI';
+	$: chatTargetIcon = selectedEmployee?.agent_icon ?? (personas.find((p) => p.id === $activeDeptId)?.icon || 'psychology');
 
 	const threads = [
 		{ id: '1', title: 'Q3 Strategy Draft', subtitle: 'Analyzing the data...', icon: 'smart_toy', active: true, time: '' },
@@ -100,10 +150,14 @@
 				conversation_history
 			};
 
+			// If chatting with a specific employee, use their department
+			// For now, employees route through their department
+			const targetDept = selectedEmployee?.department ?? $activeDeptId;
+
 			const response =
-				$activeDeptId === 'chief'
+				targetDept === 'chief' || !targetDept
 					? await sendChiefChat(authToken, $activeOrgId, payload)
-					: await sendDepartmentChat(authToken, $activeOrgId, $activeDeptId ?? 'chief', payload);
+					: await sendDepartmentChat(authToken, $activeOrgId, targetDept, payload);
 
 			chatId = response.proposals?.[0]?.chat_id ?? chatId;
 
@@ -112,7 +166,7 @@
 				{
 					id: crypto.randomUUID(),
 					role: 'ai',
-					persona: currentPersonaLabel,
+					persona: chatTargetName,
 					content: response.content,
 					time: formatTime()
 				}
@@ -132,7 +186,7 @@
 				{
 					id: crypto.randomUUID(),
 					role: 'ai',
-					persona: currentPersonaLabel,
+					persona: chatTargetName,
 					content: 'Sorry — I hit an error sending that message. Please try again.',
 					time: formatTime()
 				}
@@ -148,8 +202,33 @@
 		sendMessage();
 	}
 
-	$: currentPersonaLabel = $activeDept?.name ?? 'Chief AI';
-	$: placeholder = loading ? `Waiting for ${currentPersonaLabel}...` : `Message ${currentPersonaLabel}...`;
+	$: currentPersonaLabel = chatTargetName;
+	$: placeholder = loading ? `Waiting for ${chatTargetName}...` : `Message ${chatTargetName}...`;
+
+	// Department colors for avatar backgrounds
+	const DEPT_COLORS: Record<string, string> = {
+		ceo: '#6961ff',
+		chief: '#6961ff',
+		employee: '#20B2AA',
+		manager: '#FFB347',
+		sales: '#4F46E5',
+		customer: '#10B981',
+		backoffice: '#F59E0B',
+		default: '#888'
+	};
+
+	function getDeptColor(role: string): string {
+		return DEPT_COLORS[role?.toLowerCase()] || DEPT_COLORS.default;
+	}
+
+	function getInitials(name: string): string {
+		return name
+			.split(' ')
+			.map((n) => n[0])
+			.join('')
+			.toUpperCase()
+			.slice(0, 2);
+	}
 </script>
 
 <div class="w-full h-full flex bg-gradient-to-br from-[#2d2b42] to-[#0f0f13] relative overflow-hidden">
@@ -191,6 +270,57 @@
 		</div>
 
 		<div class="flex-1 overflow-y-auto px-2 pb-4 space-y-1">
+			<!-- Team / Employees Section -->
+			{#if employeeTabs.length > 0 || loadingTabs}
+				<div class="px-3 py-2 text-xs font-medium text-white/40 uppercase tracking-wider mb-1 flex items-center gap-2">
+					<MaterialIcon icon="groups" size={14} />
+					Team
+					{#if employeeTabs.length > 0}
+						<span class="text-white/30">({employeeTabs.length})</span>
+					{/if}
+				</div>
+				{#if loadingTabs}
+					<div class="flex items-center justify-center py-4">
+						<div class="h-4 w-4 animate-spin rounded-full border-2 border-white/20 border-t-white"></div>
+					</div>
+				{:else}
+					{#each employeeTabs.filter(t => t.is_visible) as tab}
+						<button
+							class="w-full flex items-center gap-3 px-3 py-3 min-h-[48px] rounded-lg text-left group transition-all
+								{selectedEmployee?.id === tab.id ? 'bg-[#6961ff]/20 border border-[#6961ff]/20' : 'hover:bg-white/5 border border-transparent'}"
+							on:click={() => selectEmployee(tab)}
+						>
+							<div
+								class="w-8 h-8 rounded-lg flex items-center justify-center flex-shrink-0 text-xs font-bold"
+								style="background-color: {getDeptColor(tab.department)}20; color: {getDeptColor(tab.department)}"
+							>
+								{#if tab.agent_icon}
+									<span>{tab.agent_icon}</span>
+								{:else}
+									{getInitials(tab.agent_name)}
+								{/if}
+							</div>
+							<div class="flex-1 min-w-0">
+								<div class="flex items-center gap-1">
+									<h4 class="text-sm font-medium text-white{selectedEmployee?.id === tab.id ? '' : '/90'} truncate">{tab.agent_name}</h4>
+									{#if tab.is_pinned}
+										<MaterialIcon icon="push_pin" size={12} class="text-[#6961ff] shrink-0" />
+									{/if}
+								</div>
+								<p class="text-xs text-white/40 truncate capitalize">{tab.department}</p>
+							</div>
+							{#if (tab.message_count ?? 0) > 0}
+								<span class="w-5 h-5 rounded-full bg-[#6961ff] text-[10px] text-white flex items-center justify-center flex-shrink-0">
+									{tab.message_count}
+								</span>
+							{/if}
+						</button>
+					{/each}
+				{/if}
+				<div class="border-b border-white/5 my-3"></div>
+			{/if}
+
+			<!-- Recent Threads -->
 			<div class="px-3 py-2 text-xs font-medium text-white/40 uppercase tracking-wider mb-1">Recent</div>
 			{#each threads as thread}
 				<button class="w-full flex items-center gap-3 px-3 py-3 min-h-[48px] rounded-lg text-left group transition-all {thread.active ? 'bg-[#6961ff]/20 border border-[#6961ff]/20' : 'hover:bg-white/5 border border-transparent'}">
@@ -222,16 +352,37 @@
 			</button>
 
 			<div class="bg-[#1c1c21]/80 backdrop-blur-md rounded-xl p-1 inline-flex shadow-lg ring-1 ring-white/10 pointer-events-auto overflow-x-auto max-w-[calc(100vw-6rem)] sm:max-w-none scrollbar-hide">
-				{#each personas as persona}
+				{#if selectedEmployee}
+					<!-- Show selected employee with back button -->
 					<button
-						class="px-3 sm:px-4 py-2 rounded-lg text-xs sm:text-sm font-medium transition-all flex items-center gap-1.5 sm:gap-2 whitespace-nowrap min-h-[40px]
-							{$activeDeptId === persona.id ? 'bg-[#6961ff] text-white shadow-sm' : 'text-white/60 hover:text-white'}"
-						on:click={() => ($activeDeptId = persona.id)}
+						class="px-3 sm:px-4 py-2 rounded-lg text-xs sm:text-sm font-medium transition-all flex items-center gap-1.5 sm:gap-2 whitespace-nowrap min-h-[40px] text-white/60 hover:text-white"
+						on:click={clearEmployeeSelection}
 					>
-						<MaterialIcon icon={persona.icon} size={18} />
-						<span class="hidden sm:inline">{persona.label}</span>
+						<MaterialIcon icon="arrow_back" size={18} />
+						<span class="hidden sm:inline">Back</span>
 					</button>
-				{/each}
+					<div class="px-3 sm:px-4 py-2 rounded-lg text-xs sm:text-sm font-medium bg-[#6961ff] text-white shadow-sm flex items-center gap-1.5 sm:gap-2 whitespace-nowrap min-h-[40px]">
+						{#if selectedEmployee.agent_icon}
+							<span class="text-lg">{selectedEmployee.agent_icon}</span>
+						{:else}
+							<MaterialIcon icon="person" size={18} />
+						{/if}
+						<span>{selectedEmployee.agent_name}</span>
+						<span class="text-white/60 text-xs capitalize hidden sm:inline">({selectedEmployee.department})</span>
+					</div>
+				{:else}
+					<!-- Normal persona switcher -->
+					{#each personas as persona}
+						<button
+							class="px-3 sm:px-4 py-2 rounded-lg text-xs sm:text-sm font-medium transition-all flex items-center gap-1.5 sm:gap-2 whitespace-nowrap min-h-[40px]
+								{$activeDeptId === persona.id && !selectedEmployee ? 'bg-[#6961ff] text-white shadow-sm' : 'text-white/60 hover:text-white'}"
+							on:click={() => { $activeDeptId = persona.id; clearEmployeeSelection(); }}
+						>
+							<MaterialIcon icon={persona.icon} size={18} />
+							<span class="hidden sm:inline">{persona.label}</span>
+						</button>
+					{/each}
+				{/if}
 			</div>
 		</div>
 
@@ -330,7 +481,7 @@
 </div>
 
 {#if voiceModeOpen}
-	<VoiceMode onDismiss={() => (voiceModeOpen = false)} />
+	<VoiceMode onDismiss={() => (voiceModeOpen = false)} {selectedEmployee} />
 {/if}
 
 <style>
