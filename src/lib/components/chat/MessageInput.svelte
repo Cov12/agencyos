@@ -82,6 +82,7 @@
 	import IntegrationsMenu from './MessageInput/IntegrationsMenu.svelte';
 	import Component from '../icons/Component.svelte';
 	import PlusAlt from '../icons/PlusAlt.svelte';
+	import VoiceMode from '$lib/components/agencyos/VoiceMode.svelte';
 
 	import CommandSuggestionList from './MessageInput/CommandSuggestionList.svelte';
 	import Knobs from '../icons/Knobs.svelte';
@@ -1768,6 +1769,18 @@
 													<PageEdit className="size-4.5 translate-y-[0.5px]" />
 												</button>
 											</Tooltip>
+										{/if}
+
+										<!-- AgencyOS Voice Mode -->
+										{#if !generating}
+											<div class="self-center">
+												<VoiceMode
+													disabled={generating}
+													on:audio={(e) => {
+														dispatch('audio', e.detail);
+													}}
+												/>
+											</div>
 										{/if}
 
 										{#if (!history?.currentId || history.messages[history.currentId]?.done == true) && ($_user?.role === 'admin' || ($_user?.permissions?.chat?.stt ?? true))}

@@ -1515,6 +1515,16 @@ app.include_router(
 app.include_router(analytics.router, prefix="/api/v1/analytics", tags=["analytics"])
 app.include_router(utils.router, prefix="/api/v1/utils", tags=["utils"])
 
+# ── AgencyOS Integration ──────────────────────────────────────────────
+# This is the ONLY custom integration point. All AgencyOS code lives in
+# apps/agencyos/ — see apps/agencyos/README.md for architecture details.
+try:
+    from apps.agencyos.backend.mount import mount_agencyos
+    mount_agencyos(app)
+except Exception as e:
+    log.warning(f"AgencyOS mount skipped: {e}")
+# ──────────────────────────────────────────────────────────────────────
+
 # SCIM 2.0 API for identity management
 if ENABLE_SCIM:
     app.include_router(scim.router, prefix="/api/v1/scim/v2", tags=["scim"])
