@@ -202,3 +202,91 @@ class AgencyOSAuditLog(Base):
         Index("agencyos_audit_org_idx", "org_id"),
         Index("agencyos_audit_type_idx", "org_id", "event_type"),
     )
+
+
+####################
+# Cortex Approval (Read Model)
+####################
+
+class AgencyOSCortexApproval(Base):
+    """
+    Mirrored copy of Cortex approvals for fast local UI rendering.
+
+    This is a read model - the source of truth is in Cortex.
+    Synced periodically via the CortexAdapter.sync_approvals() method.
+    """
+    __tablename__ = "agencyos_cortex_approval"
+
+    id = Column(String, primary_key=True)  # Same ID as Cortex
+    org_id = Column(String, ForeignKey("agencyos_organization.id"), nullable=False)
+    cortex_company_id = Column(String, nullable=False)  # Cortex company ID
+
+    # Approval info
+    approval_type = Column(String, nullable=False)  # hire_agent, custom, etc.
+    status = Column(String, nullable=False)  # pending, approved, rejected, revision_requested
+    payload = Column(JSON, server_default="{}")
+
+    # Requester info
+    requested_by_agent_id = Column(String, nullable=True)
+    requested_by_agent_name = Column(String, nullable=True)
+    requested_by_user_id = Column(String, nullable=True)
+
+    # Decision info
+    decision_note = Column(Text, nullable=True)
+    decided_by_user_id = Column(String, nullable=True)
+    decided_at = Column(BigInteger, nullable=True)
+
+    # Timestamps (from Cortex)
+    cortex_created_at = Column(BigInteger, nullable=False)
+    cortex_updated_at = Column(BigInteger, nullable=False)
+
+    # Local sync tracking
+    synced_at = Column(BigInteger, default=now_ms)
+
+    __table_args__ = (
+        Index("agencyos_cortex_approval_org_idx", "org_id"),
+        Index("agencyos_cortex_approval_status_idx", "org_id", "status"),
+        Index("agencyos_cortex_approval_type_idx", "org_id", "approval_type"),
+    )
+
+
+####################
+# Cortex Employee Tab State
+####################
+
+class AgencyOSEmployeeTab(Base):
+    """
+    Persisted employee tab state for dynamic chat tabs.
+
+    Stores visibility and conversation history for each Cortex agent
+    that the user has interacted with.
+    """
+    __tablename__ = "agencyos_employee_tab"
+
+    id = Column(String, primary_key=True, default=generate_id)
+    org_id = Column(String, ForeignKey("agencyos_organization.id"), nullable=False)
+    user_id = Column(String, nullable=False)  # OpenWebUI user ID
+
+    # Agent info (from Cortex)
+    agent_id = Column(String, nullable=False)
+    agent_name = Column(String, nullable=False)
+    agent_icon = Column(String, nullable=True)
+    department = Column(String, nullable=False)
+
+    # Tab state
+    is_visible = Column(Boolean, default=True)
+    is_pinned = Column(Boolean, default=False)
+    sort_order = Column(BigInteger, default=0)
+
+    # Conversation history (stored locally)
+    conversation_history = Column(JSON, server_default="[]")
+    last_interaction_at = Column(BigInteger, nullable=True)
+
+    # Timestamps
+    created_at = Column(BigInteger, default=now_ms)
+    updated_at = Column(BigInteger, default=now_ms)
+
+    __table_args__ = (
+        Index("agencyos_employee_tab_org_user_idx", "org_id", "user_id"),
+        Index("agencyos_employee_tab_agent_idx", "org_id", "agent_id"),
+    )
