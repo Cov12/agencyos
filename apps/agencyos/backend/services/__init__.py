@@ -24,6 +24,7 @@ from .cortex_types import (
     EmployeeTabState,
 )
 from .cortex_approvals import CortexApprovalsService
+from .employee_tabs import EmployeeTabsService
 
 __all__ = [
     "Orchestrator",
@@ -61,4 +62,5 @@ __all__ = [
     "CortexRouteResponse",
     "EmployeeTabState",
     "CortexApprovalsService",
+    "EmployeeTabsService",
 ]

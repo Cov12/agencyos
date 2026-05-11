@@ -19,6 +19,7 @@ from .routers.email_ingest import router as email_router
 from .routers.voice import router as voice_router
 from .routers.auth_callback import router as auth_callback_router
 from .routers.cortex_approvals import router as cortex_approvals_router
+from .routers.employee_tabs import router as employee_tabs_router
 from .middleware.tenant import TenantMiddleware
 from .middleware.jwt_auth import JWTAuthMiddleware
 from .middleware.rate_limiter import RateLimiterMiddleware
@@ -50,6 +51,7 @@ def mount_agencyos(app: FastAPI) -> None:
     app.include_router(departments_router)
     app.include_router(proposals_router)
     app.include_router(cortex_approvals_router)  # Cortex approval inbox
+    app.include_router(employee_tabs_router)  # Dynamic employee tabs
     app.include_router(workpipe_router)
     app.include_router(email_router)
     app.include_router(voice_router)
@@ -92,4 +94,4 @@ def mount_agencyos(app: FastAPI) -> None:
     except Exception as e:
         logger.warning(f"AgencyOS table creation skipped: {e}")
 
-    logger.info("AgencyOS mounted — 7 routers, 5 middleware layers (error/rate/auth-redirect/jwt/tenant)")
+    logger.info("AgencyOS mounted — 8 routers, 5 middleware layers (error/rate/auth-redirect/jwt/tenant)")

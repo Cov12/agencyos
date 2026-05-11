@@ -412,3 +412,161 @@ export const syncCortexApprovals = async (
 		}
 	);
 };
+
+// ─── Employee Tabs ────────────────────────────────────────────
+
+export interface EmployeeTab {
+	id: string;
+	agent_id: string;
+	agent_name: string;
+	agent_icon?: string;
+	department: string;
+	is_visible: boolean;
+	is_pinned: boolean;
+	sort_order: number;
+	conversation_history?: Array<{ role: string; content: string; timestamp?: number }>;
+	message_count?: number;
+	last_interaction_at?: number;
+	created_at: number;
+	updated_at: number;
+}
+
+export const getEmployeeTabs = async (
+	token: string,
+	orgId: string,
+	userId: string,
+	visibleOnly: boolean = true
+) => {
+	const searchParams = new URLSearchParams({
+		org_id: orgId,
+		user_id: userId,
+		visible_only: String(visibleOnly)
+	});
+	return apiCall<{ tabs: EmployeeTab[]; total: number }>(
+		`${AGENCYOS_API_BASE}/employee-tabs/?${searchParams.toString()}`,
+		token
+	);
+};
+
+export const getEmployeeTab = async (
+	token: string,
+	tabId: string,
+	orgId: string,
+	userId: string
+) => {
+	return apiCall<EmployeeTab>(
+		`${AGENCYOS_API_BASE}/employee-tabs/${tabId}?org_id=${orgId}&user_id=${userId}`,
+		token
+	);
+};
+
+export const getEmployeeTabByAgent = async (
+	token: string,
+	agentId: string,
+	orgId: string,
+	userId: string
+) => {
+	return apiCall<EmployeeTab>(
+		`${AGENCYOS_API_BASE}/employee-tabs/by-agent/${agentId}?org_id=${orgId}&user_id=${userId}`,
+		token
+	);
+};
+
+export const toggleTabVisibility = async (
+	token: string,
+	tabId: string,
+	orgId: string,
+	userId: string,
+	isVisible: boolean
+) => {
+	return apiCall<{ id: string; is_visible: boolean; message: string }>(
+		`${AGENCYOS_API_BASE}/employee-tabs/${tabId}/visibility?org_id=${orgId}&user_id=${userId}`,
+		token,
+		{
+			method: 'POST',
+			body: JSON.stringify({ is_visible: isVisible })
+		}
+	);
+};
+
+export const toggleTabPin = async (
+	token: string,
+	tabId: string,
+	orgId: string,
+	userId: string,
+	isPinned: boolean
+) => {
+	return apiCall<{ id: string; is_pinned: boolean; message: string }>(
+		`${AGENCYOS_API_BASE}/employee-tabs/${tabId}/pin?org_id=${orgId}&user_id=${userId}`,
+		token,
+		{
+			method: 'POST',
+			body: JSON.stringify({ is_pinned: isPinned })
+		}
+	);
+};
+
+export const addTabMessage = async (
+	token: string,
+	tabId: string,
+	orgId: string,
+	userId: string,
+	role: 'user' | 'assistant',
+	content: string
+) => {
+	return apiCall<{ id: string; message_count: number; last_interaction_at: number }>(
+		`${AGENCYOS_API_BASE}/employee-tabs/${tabId}/messages?org_id=${orgId}&user_id=${userId}`,
+		token,
+		{
+			method: 'POST',
+			body: JSON.stringify({ role, content })
+		}
+	);
+};
+
+export const clearTabHistory = async (
+	token: string,
+	tabId: string,
+	orgId: string,
+	userId: string
+) => {
+	return apiCall<{ id: string; message: string }>(
+		`${AGENCYOS_API_BASE}/employee-tabs/${tabId}/messages?org_id=${orgId}&user_id=${userId}`,
+		token,
+		{
+			method: 'DELETE'
+		}
+	);
+};
+
+export const syncEmployeeTabs = async (
+	token: string,
+	orgId: string,
+	userId: string,
+	cortexCompanyId: string
+) => {
+	return apiCall<{ success: boolean; stats: Record<string, number>; message: string }>(
+		`${AGENCYOS_API_BASE}/employee-tabs/sync?org_id=${orgId}&user_id=${userId}`,
+		token,
+		{
+			method: 'POST',
+			body: JSON.stringify({ cortex_company_id: cortexCompanyId })
+		}
+	);
+};
+
+export const reorderTabs = async (
+	token: string,
+	orgId: string,
+	userId: string,
+	tabIds: string[]
+) => {
+	return apiCall<{ success: boolean; message: string }>(
+		`${AGENCYOS_API_BASE}/employee-tabs/reorder?org_id=${orgId}&user_id=${userId}`,
+		token,
+		{
+			method: 'POST',
+			body: JSON.stringify({ tab_ids: tabIds })
+		}
+	);
+};
