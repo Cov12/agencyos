@@ -4,6 +4,7 @@
 	import { get } from 'svelte/store';
 
 	export let onDismiss: (() => void) | undefined = undefined;
+	export let selectedEmployee: { id: string; agent_name: string; department: string; agent_icon?: string } | null = null;
 	import { user } from '$lib/stores';
 	import { activeDeptId, activeDept, activeOrgId } from '$lib/stores/agencyos';
 	import {
@@ -49,9 +50,12 @@
 		error: 'Voice unavailable'
 	};
 
-	$: deptName = $activeDept?.name ?? 'Chief AI';
+	// Use selected employee name if available, otherwise fall back to department
+	$: targetName = selectedEmployee?.agent_name ?? $activeDept?.name ?? 'Chief AI';
 	$: statusText = stateTitles[$voiceStateStore] ?? 'Tap to speak';
-	$: subtitle = `Connected to ${deptName}`;
+	$: subtitle = selectedEmployee
+		? `${selectedEmployee.agent_name} (${selectedEmployee.department})`
+		: `Connected to ${targetName}`;
 	$: recentTurns = conversationHistory.slice(-4).reverse();
 
 	function getAuthToken() {
@@ -299,7 +303,7 @@
 			const text = String(payload?.text ?? '').trim();
 			if (!text) return;
 			lastTranscription = text;
-			addVoiceTurn('user', text, deptName);
+			addVoiceTurn('user', text, targetName);
 			conversationHistory = [...conversationHistory, { role: 'user', text, timestamp: Date.now() }];
 			return;
 		}
@@ -308,7 +312,7 @@
 			const text = String(payload?.text ?? payload?.content ?? '').trim();
 			if (!text) return;
 			lastResponse = text;
-			addVoiceTurn('ai', text, deptName);
+			addVoiceTurn('ai', text, targetName);
 			conversationHistory = [...conversationHistory, { role: 'ai', text, timestamp: Date.now() }];
 			if (get(voiceConfig).autoPlayResponse === false) {
 				setVoiceState('idle');
@@ -391,7 +395,7 @@
 							: 'bg-rose-400'
 				}`}
 			></span>
-			<span>Voice Channel: {deptName}</span>
+			<span>Voice Channel: {targetName}</span>
 		</div>
 
 		<!-- Orb -->
@@ -468,7 +472,7 @@
 			<div class="mt-4 w-full max-w-xl space-y-2">
 				{#each recentTurns as turn}
 					<div class="text-xs sm:text-sm rounded-xl px-3 py-2 border border-white/10 bg-white/[0.03] text-white/70">
-						<span class="uppercase tracking-wide text-[10px] text-white/40 mr-2">{turn.role === 'user' ? 'You' : deptName}</span>
+						<span class="uppercase tracking-wide text-[10px] text-white/40 mr-2">{turn.role === 'user' ? 'You' : targetName}</span>
 						{turn.text}
 					</div>
 				{/each}
