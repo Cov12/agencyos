@@ -1,0 +1,39 @@
+# AgencyOS Feature Flags
+# Controls feature availability for gradual rollout
+
+routing:
+  # Enable local fast lane for complexity 1-2 questions
+  local_fast_enabled: true
+  # Timeout for local fast responses (seconds)
+  local_fast_timeout_seconds: 2.0
+  # Confidence threshold to use suggested response from intent classifier
+  local_fast_confidence_threshold: 0.7
+
+  # Enable routing to Cortex for complex work
+  cortex_routing_enabled: false  # Start disabled until adapter is ready
+  # Timeout for Cortex sync calls (seconds)
+  cortex_sync_timeout_seconds: 30.0
+  # Threshold for async routing (seconds estimated)
+  cortex_async_threshold_seconds: 60.0
+
+guardrails:
+  # Maximum response length for local fast lane
+  max_local_response_tokens: 256
+  # Topics that should always escalate (never local fast)
+  always_escalate_intents:
+    - proposal_create
+    - contract_sign
+    - payment_process
+    - employee_hire
+    - data_export
+    - security_audit
+  # Departments with restricted local fast access
+  restricted_departments: []
+
+observability:
+  # Log all routing decisions
+  log_routing_decisions: true
+  # Include timing metrics
+  include_timing_metrics: true
+  # Sample rate for detailed traces (0.0-1.0)
+  trace_sample_rate: 0.1
