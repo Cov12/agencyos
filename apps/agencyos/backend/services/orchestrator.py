@@ -31,6 +31,10 @@ from .engines.sales_admin import SalesAdminEngine
 from .engines.customer import CustomerEngine
 from .engines.back_office import BackOfficeEngine
 from .intent_classifier import intent_classifier
+from .lane_router import lane_router, Lane, RoutingDecision
+from .local_responder import local_responder, LocalResponse
+from .cortex_adapter import get_cortex_adapter, CortexError
+from .cortex_types import CortexRouteRequest
 
 logger = logging.getLogger("agencyos.orchestrator")
 
@@ -205,12 +209,26 @@ class Orchestrator:
             if knowledge_context:
                 system_prompt += f"\n\n## Department Knowledge Base\n{knowledge_context}"
 
-        # Classify with local model before routing
-        intent = await self.classify_intent(
+        # Route using lane router (determines LOCAL_FAST, CORTEX_SYNC, CORTEX_ASYNC, or FALLBACK)
+        routing_decision = await lane_router.route(
             message=message,
             department_slug=department_slug,
             conversation_history=conversation_history or [],
+            context={"org_id": org_id, "user_id": user_id},
         )
+
+        # Convert to legacy intent format for backward compatibility
+        intent = {
+            "intent": routing_decision.intent_result.intent,
+            "complexity": routing_decision.intent_result.complexity,
+            "needs_tool": routing_decision.intent_result.needs_tool,
+            "department": routing_decision.intent_result.department,
+            "can_handle": routing_decision.intent_result.can_handle_locally,
+            "suggested_response": routing_decision.intent_result.suggested_response or "",
+            "confidence": routing_decision.intent_result.confidence,
+            "escalation_reason": routing_decision.intent_result.escalation_reason,
+            "_classification_failed": False,
+        }
 
         # Inject CRM context via department engine (Phase 2B) or legacy bridge
         if db:
@@ -254,32 +272,136 @@ class Orchestrator:
                 "If an action is needed, provide a structured action proposal."
             )
 
-        # Local-first direct response path
-        suggested_response = (intent.get("suggested_response") or "").strip()
-        if intent.get("can_handle") and suggested_response:
+        # Route based on lane decision
+        selected_tier = "local"
+        result = {"content": "", "model": "", "usage": {}}
+
+        if routing_decision.lane == Lane.LOCAL_FAST:
+            # LOCAL_FAST: Use local responder (calls Ollama via ModelRouter)
             selected_tier = "local"
-            self.routing_stats[selected_tier] += 1
+            self.routing_stats["local"] += 1
+
             logger.info(
-                f"[{org_id}] Routing decision for {department_slug}: {selected_tier} "
-                f"(intent={intent.get('intent')}, complexity={intent.get('complexity')}, "
-                f"needs_tool={intent.get('needs_tool')})"
+                f"[{org_id}] Routing to LOCAL_FAST for {department_slug}: "
+                f"intent={intent.get('intent')}, complexity={intent.get('complexity')}, "
+                f"reason={routing_decision.reason}"
             )
 
-            result = {
-                "model": "gemma-9b-classifier",
-                "content": suggested_response,
-                "usage": {},
-            }
+            local_response: LocalResponse = await local_responder.respond(
+                message=message,
+                routing_decision=routing_decision,
+                conversation_history=conversation_history,
+            )
+
+            if local_response.success:
+                result = {
+                    "model": "ollama/gemma2:9b",
+                    "content": local_response.content,
+                    "usage": {"tokens": local_response.tokens_used},
+                }
+            elif local_response.escalated:
+                # Local failed, escalate to mid tier
+                logger.info(
+                    f"[{org_id}] Local response escalated: {local_response.escalation_reason}"
+                )
+                selected_tier = "mid"
+                self.routing_stats["mid"] += 1
+                result = await self.model_router.generate(
+                    tier="mid",
+                    messages=messages,
+                    system_prompt=system_prompt,
+                )
+            else:
+                result = {"content": "I couldn't process that request.", "error": True}
+
+        elif routing_decision.lane == Lane.CORTEX_SYNC:
+            # CORTEX_SYNC: Use Cortex adapter synchronously
+            selected_tier = "cortex_sync"
+            self.routing_stats["mid"] += 1  # Count as mid-tier for stats
+
+            logger.info(
+                f"[{org_id}] Routing to CORTEX_SYNC for {department_slug}: "
+                f"intent={intent.get('intent')}, reason={routing_decision.reason}"
+            )
+
+            try:
+                cortex = get_cortex_adapter()
+                cortex_request = CortexRouteRequest(
+                    message=message,
+                    department=department_slug,
+                    conversation_history=[
+                        {"role": m.get("role", ""), "content": m.get("content", "")}
+                        for m in (conversation_history or [])
+                    ],
+                    org_id=org_id,
+                    user_id=user_id,
+                    sync=True,
+                )
+                cortex_response = await cortex.route_sync(cortex_request)
+                result = {
+                    "model": f"cortex/{cortex_response.agent_name or 'agent'}",
+                    "content": cortex_response.content or "",
+                    "usage": {},
+                }
+            except CortexError as e:
+                logger.warning(f"Cortex sync failed, falling back to mid tier: {e}")
+                selected_tier = "mid"
+                result = await self.model_router.generate(
+                    tier="mid",
+                    messages=messages,
+                    system_prompt=system_prompt,
+                )
+
+        elif routing_decision.lane == Lane.CORTEX_ASYNC:
+            # CORTEX_ASYNC: Use Cortex adapter asynchronously (returns run_id)
+            selected_tier = "cortex_async"
+            self.routing_stats["premium"] += 1  # Count as premium for stats
+
+            logger.info(
+                f"[{org_id}] Routing to CORTEX_ASYNC for {department_slug}: "
+                f"intent={intent.get('intent')}, reason={routing_decision.reason}"
+            )
+
+            try:
+                cortex = get_cortex_adapter()
+                cortex_request = CortexRouteRequest(
+                    message=message,
+                    department=department_slug,
+                    conversation_history=[
+                        {"role": m.get("role", ""), "content": m.get("content", "")}
+                        for m in (conversation_history or [])
+                    ],
+                    org_id=org_id,
+                    user_id=user_id,
+                    sync=False,
+                )
+                cortex_response = await cortex.route_async(cortex_request)
+                result = {
+                    "model": "cortex/async",
+                    "content": f"Your request is being processed. Run ID: {cortex_response.run_id}",
+                    "usage": {},
+                    "run_id": cortex_response.run_id,
+                    "async": True,
+                }
+            except CortexError as e:
+                logger.warning(f"Cortex async failed, falling back to premium tier: {e}")
+                selected_tier = "premium"
+                result = await self.model_router.generate(
+                    tier="premium",
+                    messages=messages,
+                    system_prompt=system_prompt,
+                )
+
         else:
+            # FALLBACK: Use existing mid/premium model routing
             complexity = int(intent.get("complexity", 3))
             selected_tier = "mid" if complexity <= 3 else "premium"
             self.routing_stats[selected_tier] += 1
 
             logger.info(
-                f"[{org_id}] Routing decision for {department_slug}: {selected_tier} "
-                f"(intent={intent.get('intent')}, complexity={complexity}, "
-                f"needs_tool={intent.get('needs_tool')}, "
-                f"classification_failed={intent.get('_classification_failed', False)})"
+                f"[{org_id}] Routing to FALLBACK ({selected_tier}) for {department_slug}: "
+                f"intent={intent.get('intent')}, complexity={complexity}, "
+                f"reason={routing_decision.reason}"
             )
 
             result = await self.model_router.generate(
