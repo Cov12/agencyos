@@ -13,10 +13,15 @@ from sqlalchemy.orm import Session
 from starlette.requests import Request
 
 from ..middleware.tenant import get_tenant_session
+from ..middleware.deps import require_app_access
 from ..services.employee_tabs import EmployeeTabsService
 from ..services.cortex_adapter import CortexError
 
-router = APIRouter(prefix="/api/agencyos/employee-tabs", tags=["agencyos-employee-tabs"])
+router = APIRouter(
+    prefix="/api/agencyos/employee-tabs",
+    tags=["agencyos-employee-tabs"],
+    dependencies=[Depends(require_app_access("CORTEX"))],
+)
 
 # Service instance (singleton)
 _service: Optional[EmployeeTabsService] = None
@@ -73,8 +78,8 @@ class ReorderTabsRequest(BaseModel):
 
 @router.get("/")
 async def list_tabs(
+    request: Request,
     org_id: str,
-    user_id: str,
     visible_only: bool = True,
     db: Session = Depends(get_tenant_session),
 ):
@@ -83,6 +88,7 @@ async def list_tabs(
 
     Returns tabs sorted by pinned status and sort order.
     """
+    user_id = request.state.portal_auth.user_id
     service = get_service()
     tabs = service.list_tabs(
         db,
@@ -117,10 +123,11 @@ async def list_tabs(
 async def get_tab(
     tab_id: str,
     org_id: str,
-    user_id: str,
+    request: Request,
     db: Session = Depends(get_tenant_session),
 ):
     """Get a specific tab with full conversation history."""
+    user_id = request.state.portal_auth.user_id
     service = get_service()
     tab = service.get_tab(db, tab_id, org_id, user_id)
 
@@ -147,10 +154,11 @@ async def get_tab(
 async def get_tab_by_agent(
     agent_id: str,
     org_id: str,
-    user_id: str,
+    request: Request,
     db: Session = Depends(get_tenant_session),
 ):
     """Get a tab by Cortex agent ID."""
+    user_id = request.state.portal_auth.user_id
     service = get_service()
     tab = service.get_tab_by_agent(db, agent_id, org_id, user_id)
 
@@ -179,11 +187,12 @@ async def get_tab_by_agent(
 async def toggle_visibility(
     tab_id: str,
     org_id: str,
-    user_id: str,
     data: ToggleVisibilityRequest,
+    request: Request,
     db: Session = Depends(get_tenant_session),
 ):
     """Toggle tab visibility (show/hide)."""
+    user_id = request.state.portal_auth.user_id
     service = get_service()
     tab = service.toggle_visibility(
         db,
@@ -207,11 +216,12 @@ async def toggle_visibility(
 async def toggle_pin(
     tab_id: str,
     org_id: str,
-    user_id: str,
     data: TogglePinRequest,
+    request: Request,
     db: Session = Depends(get_tenant_session),
 ):
     """Toggle tab pin state."""
+    user_id = request.state.portal_auth.user_id
     service = get_service()
     tab = service.toggle_pin(
         db,
@@ -235,11 +245,12 @@ async def toggle_pin(
 async def update_sort_order(
     tab_id: str,
     org_id: str,
-    user_id: str,
     data: UpdateSortOrderRequest,
+    request: Request,
     db: Session = Depends(get_tenant_session),
 ):
     """Update tab sort order."""
+    user_id = request.state.portal_auth.user_id
     service = get_service()
     tab = service.update_sort_order(
         db,
@@ -261,11 +272,12 @@ async def update_sort_order(
 @router.post("/reorder")
 async def reorder_tabs(
     org_id: str,
-    user_id: str,
     data: ReorderTabsRequest,
+    request: Request,
     db: Session = Depends(get_tenant_session),
 ):
     """Reorder multiple tabs at once."""
+    user_id = request.state.portal_auth.user_id
     service = get_service()
 
     for index, tab_id in enumerate(data.tab_ids):
@@ -292,14 +304,15 @@ async def reorder_tabs(
 async def add_message(
     tab_id: str,
     org_id: str,
-    user_id: str,
     data: AddMessageRequest,
+    request: Request,
     db: Session = Depends(get_tenant_session),
 ):
     """Add a message to the tab's conversation history."""
     if data.role not in ("user", "assistant"):
         raise HTTPException(status_code=400, detail="Role must be 'user' or 'assistant'")
 
+    user_id = request.state.portal_auth.user_id
     service = get_service()
     tab = service.add_message(
         db,
@@ -324,10 +337,11 @@ async def add_message(
 async def clear_history(
     tab_id: str,
     org_id: str,
-    user_id: str,
+    request: Request,
     db: Session = Depends(get_tenant_session),
 ):
     """Clear conversation history for a tab."""
+    user_id = request.state.portal_auth.user_id
     service = get_service()
     tab = service.clear_history(
         db,
@@ -353,8 +367,8 @@ async def clear_history(
 @router.post("/sync")
 async def sync_tabs(
     org_id: str,
-    user_id: str,
     data: SyncRequest,
+    request: Request,
     db: Session = Depends(get_tenant_session),
 ):
     """
@@ -363,6 +377,7 @@ async def sync_tabs(
     Creates tabs for new agents, updates existing ones.
     Does not delete tabs (preserves conversation history).
     """
+    user_id = request.state.portal_auth.user_id
     service = get_service()
 
     try:
