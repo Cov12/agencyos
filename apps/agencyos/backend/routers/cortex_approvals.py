@@ -13,10 +13,15 @@ from sqlalchemy.orm import Session
 from starlette.requests import Request
 
 from ..middleware.tenant import get_tenant_session
+from ..middleware.deps import require_app_access
 from ..services.cortex_approvals import CortexApprovalsService
 from ..services.cortex_adapter import CortexError
 
-router = APIRouter(prefix="/api/agencyos/cortex-approvals", tags=["agencyos-cortex-approvals"])
+router = APIRouter(
+    prefix="/api/agencyos/cortex-approvals",
+    tags=["agencyos-cortex-approvals"],
+    dependencies=[Depends(require_app_access("CORTEX"))],
+)
 
 # Service instance (singleton)
 _service: Optional[CortexApprovalsService] = None
@@ -152,7 +157,7 @@ async def approve_approval(
     approval_id: str,
     org_id: str,
     data: ApprovalDecisionRequest,
-    user_id: str,  # TODO: Extract from auth token
+    request: Request,
     db: Session = Depends(get_tenant_session),
 ):
     """
@@ -160,6 +165,7 @@ async def approve_approval(
 
     Proxies to Cortex API and updates local read model.
     """
+    user_id = request.state.portal_auth.user_id
     service = get_service()
 
     try:
@@ -196,7 +202,7 @@ async def reject_approval(
     approval_id: str,
     org_id: str,
     data: ApprovalDecisionRequest,
-    user_id: str,  # TODO: Extract from auth token
+    request: Request,
     db: Session = Depends(get_tenant_session),
 ):
     """
@@ -204,6 +210,7 @@ async def reject_approval(
 
     Proxies to Cortex API and updates local read model.
     """
+    user_id = request.state.portal_auth.user_id
     service = get_service()
 
     try:
