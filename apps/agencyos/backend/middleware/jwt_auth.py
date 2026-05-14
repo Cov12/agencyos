@@ -36,12 +36,14 @@ class PortalAuthContext:
         org_id: str,
         role: str = "member",
         department_memberships: list[str] | None = None,
+        app_access: list[str] | None = None,
         email: Optional[str] = None,
     ):
         self.user_id = user_id
         self.org_id = org_id
         self.role = role
         self.department_memberships = department_memberships or []
+        self.app_access = app_access or []
         self.email = email
 
     def has_department_access(self, dept_id: str) -> bool:
@@ -49,6 +51,10 @@ class PortalAuthContext:
         if self.role in ("owner", "admin"):
             return True
         return dept_id in self.department_memberships
+
+    def has_app_access(self, app: str) -> bool:
+        """Check whether this auth context grants access to a specific Portal app."""
+        return app in self.app_access
 
 
 def decode_portal_jwt(token: str) -> Optional[PortalAuthContext]:
@@ -64,6 +70,7 @@ def decode_portal_jwt(token: str) -> Optional[PortalAuthContext]:
             org_id=payload.get("org_id", ""),
             role=payload.get("role", "member"),
             department_memberships=payload.get("department_memberships", []),
+            app_access=payload.get("app_access", []),
             email=payload.get("email"),
         )
     except pyjwt.ExpiredSignatureError:
