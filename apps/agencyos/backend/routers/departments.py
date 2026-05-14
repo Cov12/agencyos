@@ -4,7 +4,7 @@ AgencyOS Department Routes
 Department listing + department-scoped chat routing.
 """
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Request
 from pydantic import BaseModel
 from typing import Optional
 from sqlalchemy.orm import Session
@@ -28,7 +28,6 @@ def get_orchestrator() -> Orchestrator:
 
 class ChatRequest(BaseModel):
     message: str
-    user_id: str
     chat_id: Optional[str] = None
     conversation_history: list[dict] = []  # Previous messages for context
 
@@ -83,6 +82,7 @@ async def department_chat(
     department_slug: str,
     org_id: str,
     data: ChatRequest,
+    request: Request,
     db: Session = Depends(get_tenant_session),
     orchestrator: Orchestrator = Depends(get_orchestrator),
 ):
@@ -90,7 +90,7 @@ async def department_chat(
     result = await orchestrator.route_message(
         message=data.message,
         org_id=org_id,
-        user_id=data.user_id,
+        user_id=getattr(request.state, "user_id", "unknown"),
         department_slug=department_slug,
         chat_id=data.chat_id,
         db=db,
@@ -103,6 +103,7 @@ async def department_chat(
 async def chief_chat(
     org_id: str,
     data: ChatRequest,
+    request: Request,
     db: Session = Depends(get_tenant_session),
     orchestrator: Orchestrator = Depends(get_orchestrator),
 ):
@@ -110,7 +111,7 @@ async def chief_chat(
     result = await orchestrator.route_message(
         message=data.message,
         org_id=org_id,
-        user_id=data.user_id,
+        user_id=getattr(request.state, "user_id", "unknown"),
         department_slug=None,
         chat_id=data.chat_id,
         db=db,
