@@ -133,7 +133,7 @@ async def review_proposal(
     proposal_id: str,
     org_id: str,
     data: ReviewProposalRequest,
-    user_id: str,  # TODO: Extract from auth token
+    request: Request,
     db: Session = Depends(get_tenant_session),
 ):
     """Approve or reject a proposal."""
@@ -142,7 +142,8 @@ async def review_proposal(
 
     proposal = ProposalsService.review_proposal(
         db, proposal_id=proposal_id, org_id=org_id,
-        reviewed_by=user_id, status=data.status,
+        reviewed_by=getattr(request.state, "user_id", "unknown"),
+        status=data.status,
         review_note=data.review_note,
     )
     if not proposal:
