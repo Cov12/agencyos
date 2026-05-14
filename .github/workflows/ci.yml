@@ -19,6 +19,23 @@ jobs:
       - name: Python syntax check
         run: |
           find apps/agencyos/backend -name "*.py" -not -path "*/__pycache__/*" -exec python3 -m py_compile {} \;
+      - name: Install minimal Python deps + pytest
+        run: |
+          pip install -r backend/requirements-min.txt
+          pip install pytest pytest-asyncio pyjwt typer httpx
+      - name: pytest (AgencyOS Cortex entitlement tests)
+        # Scoped to the 3 new test files from the entitlement-gating work.
+        # The full backend/tests/ tree has pre-existing failures tracked
+        # separately; widen this scope once those are resolved.
+        # JWT_SECRET env var is intentionally omitted: both test files patch
+        # the module-level secret via monkeypatch (jwt_auth.JWT_SECRET).
+        env:
+          PYTHONPATH: ${{ github.workspace }}
+        run: |
+          pytest -v \
+            apps/agencyos/backend/tests/test_jwt_auth.py \
+            apps/agencyos/backend/tests/test_require_app_access.py \
+            apps/agencyos/backend/tests/test_routers_gating.py
       - name: Svelte convention check
         run: |
           ! grep -rn "onclick=" src/lib/components/agencyos/ --include="*.svelte" || exit 1
