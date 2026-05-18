@@ -138,7 +138,7 @@ class IntentClassifier:
 
     def _build_classification_prompt(self, department_slug: str) -> str:
         """Build the classification system prompt with department context."""
-        return self._prompt_template.format(department_slug=department_slug)
+        return self._prompt_template.replace("{department_slug}", department_slug)
 
     def _parse_classification(self, raw: str) -> IntentResult:
         """Parse classifier JSON from plain output, fenced blocks, or mixed text."""
