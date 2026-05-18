@@ -3,7 +3,7 @@
 	import { goto } from '$app/navigation';
 	import { user } from '$lib/stores';
 	import { activeOrgId } from '$lib/stores/agencyos';
-	import { getDepartments, getProposals, getProposalStats, type Department as ApiDepartment } from '$lib/apis/agencyos';
+	import { getCortexPendingCount, getDepartments, getProposals, getProposalStats, type Department as ApiDepartment } from '$lib/apis/agencyos';
 	import AppIcon from '$lib/components/agencyos/shared/AppIcon.svelte';
 	import GlassPanel from '$lib/components/agencyos/shared/GlassPanel.svelte';
 	import MaterialIcon from '$lib/components/agencyos/shared/MaterialIcon.svelte';
@@ -20,6 +20,7 @@
 		{ label: 'Chat', icon: 'chat_bubble', gradient: 'from-green-400 to-emerald-600', href: '/agencyos/chat', badge: 0 },
 		{ label: 'Dashboard', icon: 'dashboard', gradient: 'from-blue-500 to-indigo-600', href: '/agencyos/analytics' },
 		{ label: 'Proposals', icon: 'description', gradient: 'from-orange-400 to-red-500', href: '/agencyos/proposals', badge: 0 },
+		{ label: 'Cortex Approvals', icon: 'approval', gradient: 'from-teal-400 to-emerald-600', href: '/agencyos/cortex-approvals', badge: 0 },
 		{ label: 'Departments', icon: 'domain', gradient: 'from-purple-500 to-pink-600', href: '/agencyos/departments', badge: 0 },
 		{ label: 'Voice', icon: 'graphic_eq', gradient: 'from-cyan-400 to-blue-500', href: '/agencyos/voice' },
 		{ label: 'Knowledge', icon: 'school', gradient: 'from-yellow-400 to-orange-500', href: '/agencyos/knowledge', badge: 1 },
@@ -42,10 +43,11 @@
 
 		isLoading = true;
 		try {
-			const [departmentsResponse, proposalStats, proposalsResponse] = await Promise.all([
+			const [departmentsResponse, proposalStats, proposalsResponse, cortexPendingResponse] = await Promise.all([
 				getDepartments(token, $activeOrgId),
 				getProposalStats(token, $activeOrgId),
-				getProposals(token, $activeOrgId, { limit: 3 })
+				getProposals(token, $activeOrgId, { limit: 3 }),
+				getCortexPendingCount(token, $activeOrgId).catch(() => ({ count: 0 }))
 			]);
 
 			apiDepartments = departmentsResponse.departments;
@@ -55,10 +57,12 @@
 			const proposalsApp = apps.find((app) => app.label === 'Proposals');
 			const departmentsApp = apps.find((app) => app.label === 'Departments');
 			const chatApp = apps.find((app) => app.label === 'Chat');
+			const cortexApprovalsApp = apps.find((app) => app.label === 'Cortex Approvals');
 
 			if (proposalsApp) proposalsApp.badge = pendingTotal;
 			if (departmentsApp) departmentsApp.badge = apiDepartments.length;
 			if (chatApp) chatApp.badge = Math.min(proposalsResponse.total, 9);
+			if (cortexApprovalsApp) cortexApprovalsApp.badge = cortexPendingResponse.count;
 			apps = [...apps];
 		} catch (error) {
 			console.error('Failed to load AgencyOS home data:', error);
