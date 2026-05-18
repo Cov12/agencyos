@@ -151,6 +151,11 @@
 		messageInput = '';
 		loading = true;
 
+		if (selectedEmployee) {
+			addTabMessage(authToken, selectedEmployee.id, $activeOrgId, currentUserId, 'user', userMessage.content)
+				.catch((err) => console.warn('[Chat] addTabMessage user failed:', err));
+		}
+
 		try {
 			const conversation_history = [...messages]
 				.slice(-10)
@@ -185,6 +190,11 @@
 				}
 			];
 
+			if (selectedEmployee) {
+				addTabMessage(authToken, selectedEmployee.id, $activeOrgId, currentUserId, 'assistant', response.content)
+					.catch((err) => console.warn('[Chat] addTabMessage assistant failed:', err));
+			}
+
 			if (response.proposals?.length) {
 				const mapped = response.proposals.map(mapApiProposal);
 				proposals.update((existing) => {
@@ -194,16 +204,23 @@
 				});
 			}
 		} catch (error) {
+			const errorContent = 'Sorry — I hit an error sending that message. Please try again.';
 			messages = [
 				...messages,
 				{
 					id: crypto.randomUUID(),
 					role: 'ai',
 					persona: chatTargetName,
-					content: 'Sorry — I hit an error sending that message. Please try again.',
+					content: errorContent,
 					time: formatTime()
 				}
 			];
+
+			if (selectedEmployee) {
+				addTabMessage(authToken, selectedEmployee.id, $activeOrgId, currentUserId, 'assistant', errorContent)
+					.catch((err) => console.warn('[Chat] addTabMessage assistant failed:', err));
+			}
+
 			console.error(error);
 		} finally {
 			loading = false;
