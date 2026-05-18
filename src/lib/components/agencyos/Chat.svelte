@@ -7,6 +7,7 @@
 		sendDepartmentChat,
 		getDepartments,
 		getEmployeeTabs,
+		addTabMessage,
 		type Proposal as ApiProposal,
 		type EmployeeTab
 	} from '$lib/apis/agencyos';
@@ -69,10 +70,22 @@
 		}
 	}
 
+	function mapPersistedToMessages(history: EmployeeTab['conversation_history']): ChatMessage[] {
+		if (!history || history.length === 0) return [];
+		return history.map((entry, i) => ({
+			id: crypto.randomUUID?.() ?? `restored-${entry.timestamp ?? i}`,
+			role: entry.role === 'assistant' ? 'ai' : 'user',
+			content: entry.content,
+			time: entry.timestamp
+				? new Date(entry.timestamp * 1000).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' })
+				: ''
+		}));
+	}
+
 	function selectEmployee(tab: EmployeeTab) {
 		selectedEmployee = tab;
-		// Reset messages when switching employees
-		messages = [];
+		// Restore prior conversation history from backend per-tab storage
+		messages = mapPersistedToMessages(tab.conversation_history);
 		chatId = undefined;
 	}
 
