@@ -6,7 +6,7 @@ tiers:
     description: "Executive-level reasoning (Chief AI)"
     providers:
       - provider: "anthropic"
-        model: "claude-sonnet-4-20250514"
+        model: "claude-haiku-4-5-20251001"
         priority: 1
       - provider: "google"
         model: "gemini-2.5-pro"
@@ -19,7 +19,7 @@ tiers:
     description: "Department head level (Sales, Customer, Back Office)"
     providers:
       - provider: "anthropic"
-        model: "claude-sonnet-4-20250514"
+        model: "claude-haiku-4-5-20251001"
         priority: 1
       - provider: "google"
         model: "gemini-2.5-flash"
