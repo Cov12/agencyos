@@ -128,58 +128,19 @@ class ModelRouter:
         **kwargs,
     ) -> dict:
         """
-        Make the actual API call to a model provider.
-        
-        For now, routes through OpenWebUI's internal API to leverage
-        its existing provider connections and API key management.
+        Direct provider API call. (Historical note: previously proxied through
+        OpenWebUI's internal /api/chat/completions for centralized key management,
+        but Anthropic T&C changes forced direct-API usage and the proxy path
+        was removed for performance + clarity.)
         """
         provider = config["provider"]
         model = config["model"]
         max_tokens = config.get("max_tokens", 4096)
         temperature = config.get("temperature", 0.5)
 
-        # Route through OpenWebUI's internal chat completions endpoint
-        # This leverages OpenWebUI's existing API key management and provider routing
-        payload = {
-            "model": model,
-            "messages": messages,
-            "max_tokens": max_tokens,
-            "temperature": temperature,
-            "stream": False,  # Non-streaming for orchestrator use
-        }
-        payload.update(kwargs)
-
-        try:
-            # Try using OpenWebUI's internal function directly
-            return await self._call_via_openwebui(payload)
-        except Exception as e:
-            logger.warning(f"Internal call failed: {e}, trying direct API")
-            return await self._call_direct(provider, model, messages, max_tokens, temperature)
-
-    async def _call_via_openwebui(self, payload: dict) -> dict:
-        """
-        Call through OpenWebUI's internal API endpoint.
-        This is the preferred method as it uses OpenWebUI's configured
-        API keys and provider connections.
-        """
-        # Make an internal HTTP call to OpenWebUI's chat completion endpoint
-        response = await self.http_client.post(
-            "http://localhost:8080/api/chat/completions",
-            json=payload,
-            headers={"Authorization": "Bearer 0p3n-w3bu!"},  # Default internal token
-        )
-        response.raise_for_status()
-        data = response.json()
-
-        # Extract content from OpenAI-format response
-        if "choices" in data and data["choices"]:
-            content = data["choices"][0].get("message", {}).get("content", "")
-            return {
-                "content": content,
-                "model": data.get("model", payload["model"]),
-                "usage": data.get("usage", {}),
-            }
-        return {"content": str(data), "error": True}
+        # Direct provider API only — the OWUI harness path was removed
+        # after Anthropic T&C change required direct API for non-subscription use.
+        return await self._call_direct(provider, model, messages, max_tokens, temperature)
 
     async def _call_direct(
         self,
