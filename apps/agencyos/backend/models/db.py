@@ -290,3 +290,23 @@ class AgencyOSEmployeeTab(Base):
         Index("agencyos_employee_tab_org_user_idx", "org_id", "user_id"),
         Index("agencyos_employee_tab_agent_idx", "org_id", "agent_id"),
     )
+
+
+####################
+# Cortex Bridge Session
+####################
+
+
+class AgencyOSCortexSession(Base):
+    """Maps an OpenWebUI chat to a persistent Cortex bridge session id, so a
+    multi-turn chat threads the same Hermes conversation. Written by the
+    cortex_bridge thin-transport path (services/cortex_bridge.py)."""
+
+    __tablename__ = "agencyos_cortex_session"
+
+    chat_id = Column(String, primary_key=True)  # OpenWebUI chat id
+    org_id = Column(String, nullable=True)  # AgencyOS org (for scoping / cleanup)
+    cortex_session_id = Column(String, nullable=False)
+
+    created_at = Column(BigInteger, default=now_ms)
+    updated_at = Column(BigInteger, default=now_ms)

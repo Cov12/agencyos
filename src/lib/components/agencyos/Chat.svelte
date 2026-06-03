@@ -139,6 +139,11 @@
 		loading = true;
 
 		try {
+			// Stable per-conversation id so the backend can thread the Cortex/Hermes
+			// session across turns. Reset to undefined when a new chat starts (see
+			// the dept/persona switch handler), which begins a fresh session.
+			if (!chatId) chatId = crypto.randomUUID();
+
 			const conversation_history = [...messages]
 				.slice(-10)
 				.map((msg) => ({ role: msg.role === 'user' ? 'user' : 'assistant', content: msg.content }));
