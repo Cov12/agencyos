@@ -35,6 +35,7 @@ from .lane_router import lane_router, Lane, RoutingDecision
 from .local_responder import local_responder, LocalResponse
 from .cortex_adapter import get_cortex_adapter, CortexError
 from .cortex_types import CortexRouteRequest
+from . import cortex_bridge
 
 logger = logging.getLogger("agencyos.orchestrator")
 
@@ -93,6 +94,18 @@ class Orchestrator:
         """
         Route an incoming message to the appropriate department or Chief AI.
         """
+        # Thin-transport path (Option B): when the WBIT bridge is enabled, forward
+        # the turn straight to the Cortex WBIT Assistant and skip the legacy local
+        # lane/intent/model routing entirely. Single Assistant handles every dept.
+        if cortex_bridge.is_enabled():
+            return await cortex_bridge.handle_chat(
+                message=message,
+                org_id=org_id,
+                chat_id=chat_id,
+                db=db,
+                department_slug=department_slug,
+            )
+
         if department_slug:
             return await self._handle_department_message(
                 message=message,
