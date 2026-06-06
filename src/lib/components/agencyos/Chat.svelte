@@ -1,6 +1,6 @@
 <script lang="ts">
 	import { onMount } from 'svelte';
-	import { activeDeptId, activeDept, proposals, type Proposal, activeOrgId, departments } from '$lib/stores/agencyos';
+	import { activeDeptId, activeDept, proposals, type Proposal, activeOrgId } from '$lib/stores/agencyos';
 	import { user } from '$lib/stores';
 	import {
 		sendChiefChat,
@@ -35,15 +35,12 @@
 	let selectedEmployee: EmployeeTab | null = null;
 	let loadingTabs = false;
 
-	// Dynamic personas: Chief + departments from store
-	$: personas = [
-		{ id: 'chief', label: 'Chief AI', icon: 'psychology', type: 'chief' as const },
-		...$departments.map((d) => ({
-			id: d.id,
-			label: d.name,
-			icon: d.icon,
-			type: 'department' as const
-		}))
+	// Single concierge front door (#45 collapse): every chat turn flows to the one
+	// WBIT Assistant via the chief endpoint → Cortex bridge. Per-department routing
+	// was removed when AgencyOS became a thin transport in front of Cortex. The
+	// `departments` store still backs the dashboards (DeptConfig / ControlCenter).
+	const personas = [
+		{ id: 'chief', label: 'WBIT Assistant', icon: 'smart_toy', type: 'chief' as const }
 	];
 
 	$: if (!$activeDeptId) $activeDeptId = 'chief';
@@ -81,7 +78,7 @@
 	}
 
 	// Derived chat target info
-	$: chatTargetName = selectedEmployee?.agent_name ?? $activeDept?.name ?? 'Chief AI';
+	$: chatTargetName = selectedEmployee?.agent_name ?? $activeDept?.name ?? 'WBIT Assistant';
 	$: chatTargetIcon = selectedEmployee?.agent_icon ?? (personas.find((p) => p.id === $activeDeptId)?.icon || 'psychology');
 
 	const threads = [

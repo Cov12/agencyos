@@ -118,11 +118,3 @@ async def chief_chat(
         conversation_history=data.conversation_history,
     )
     return result
-
-
-@router.get("/routing-stats")
-async def get_routing_stats(
-    orchestrator: Orchestrator = Depends(get_orchestrator),
-):
-    """Return in-memory routing metrics for model-tier decisions."""
-    return orchestrator.get_routing_stats()
