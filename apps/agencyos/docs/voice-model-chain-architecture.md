@@ -1,5 +1,12 @@
 # Voice + Model Chain Architecture
 
+> **⚠️ SUPERSEDED (#43 teardown, 2026-06).** The tiered local model chain described
+> here — `ModelRouter` / `intent_classifier` / `lane_router` / per-department engines /
+> the Ollama local tier — has been removed. AgencyOS no longer hosts its own LLM brain:
+> every chat turn now forwards through the Cortex bridge to the single WBIT Assistant
+> (see `services/cortex_bridge.py` and `services/orchestrator.py`). This document is
+> retained for historical context on the original voice/model-tier design only.
+
 ## Overview
 
 AgencyOS voice conversations allow users to speak with department heads naturally. The system uses a tiered model chain to keep costs low while maintaining quality, and Whisper STT + TTS for voice I/O.

@@ -36,7 +36,7 @@ apps/agencyos/
 ├── backend/
 │   ├── routers/       # FastAPI route extensions (departments, orchestrator, approvals)
 │   ├── models/        # SQLAlchemy/Pydantic models (orgs, departments, proposals)
-│   ├── services/      # Business logic (orchestrator, model router, dept engines)
+│   ├── services/      # Business logic (Cortex bridge, orchestrator, proposals)
 │   ├── middleware/     # Auth/tenancy middleware (org context injection)
 │   └── __init__.py
 ├── frontend/
@@ -45,7 +45,6 @@ apps/agencyos/
 │   └── routes/        # SvelteKit route additions
 ├── config/
 │   ├── departments.yaml    # Department definitions & model assignments
-│   ├── model_tiers.yaml    # Model routing rules per role
 │   └── permissions.yaml    # Role-based permission matrix
 └── docs/
     └── architecture.md     # Technical architecture documentation
@@ -54,7 +53,7 @@ apps/agencyos/
 ## Design Principles
 
 1. **Isolation** — Custom code stays in `apps/agencyos/`, never in OpenWebUI core
-2. **Config-driven** — Department structure, model tiers, permissions all in YAML
+2. **Config-driven** — Department structure and permissions in YAML; the LLM brain lives in Cortex (the WBIT Assistant), reached via the Cortex bridge
 3. **Delegated Mode** — No AI auto-execution. All actions require human approval.
 4. **Dual DB** — OpenWebUI DB (AI/conversations) + WorkPipe DB (CRM/business)
 5. **Multi-tenant** — RLS on shared Postgres (Phase 1) → DB-per-tenant (Enterprise)
