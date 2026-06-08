@@ -14,12 +14,26 @@ send it back -> bridge reuses it.
 
 import logging
 import os
+import re
+import uuid
 from typing import Optional
 
 import httpx
 from sqlalchemy.orm import Session
 
 logger = logging.getLogger("agencyos.cortex_bridge")
+
+# Per-org company resolution. These MUST stay in lockstep with Cortex's
+# resolvePortalCompany (wbit-cortex: server/src/routes/portal-callback.ts) so both
+# services derive the SAME company UUID for a given Portal org id. The namespace and
+# the PORTAL_COMPANY_OVERRIDES format are identical on both sides; Python's stdlib
+# uuid.uuid5 is RFC-4122 v5 (SHA-1) and matches Cortex's inline implementation exactly
+# (verified). NEVER change the namespace — it would remap every org's company.
+_PORTAL_ORG_UUID_NAMESPACE = uuid.UUID("1d3a9b6e-0c4f-4a2d-9e7b-5f8c2a1e6d40")
+_DEFAULT_PORTAL_COMPANY_ID = "00000000-0000-4000-a000-00000000c0de"
+_UUID_RE = re.compile(
+    r"^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$", re.IGNORECASE
+)
 
 # Points at the installed WBIT bridge plugin on Cortex prod; override per-env.
 _DEFAULT_BRIDGE_URL = (
@@ -57,10 +71,53 @@ def _agent_id() -> str:
     return os.environ.get("WBIT_AGENT_ID", _DEFAULT_AGENT_ID)
 
 
-def _company_id() -> str:
-    # v1: a single configured WBIT company. Per-org company resolution is blocked
-    # on #60 (Portal cuid != UUID collapses all orgs into the fallback company).
-    return os.environ.get("WBIT_COMPANY_ID", "")
+def _default_company_id() -> str:
+    """Company used when a turn carries no org_id at all. WBIT_COMPANY_ID (if set)
+    keeps back-compat as the fallback; otherwise the shared default company."""
+    return os.environ.get("WBIT_COMPANY_ID", "").strip() or _DEFAULT_PORTAL_COMPANY_ID
+
+
+def _is_uuid(value: str) -> bool:
+    return bool(_UUID_RE.match(value))
+
+
+def _company_overrides() -> dict[str, str]:
+    """Parse PORTAL_COMPANY_OVERRIDES ("<orgId>=<companyUuid>,...") — same env and
+    format Cortex reads, so a Portal org pinned to an existing company (e.g. WBIT ->
+    …c0de) resolves identically on both sides. Split on the FIRST '=' only."""
+    raw = os.environ.get("PORTAL_COMPANY_OVERRIDES", "")
+    out: dict[str, str] = {}
+    for pair in raw.split(","):
+        pair = pair.strip()
+        if not pair:
+            continue
+        idx = pair.find("=")
+        if idx <= 0:
+            continue
+        key = pair[:idx].strip()
+        val = pair[idx + 1:].strip()
+        if key and _is_uuid(val):
+            out[key] = val
+    return out
+
+
+def _resolve_company_id(org_id: Optional[str]) -> str:
+    """Map a Portal org id to its Cortex company UUID. MUST match Cortex's
+    resolvePortalCompany:
+      - no org_id        -> default company (WBIT_COMPANY_ID env or …c0de)
+      - override match    -> pinned company UUID
+      - already a UUID    -> used as-is
+      - a CUID (today)    -> deterministic UUIDv5 (shared namespace)
+    """
+    oid = (org_id or "").strip()
+    if not oid:
+        return _default_company_id()
+    override = _company_overrides().get(oid)
+    if override:
+        return override
+    if _is_uuid(oid):
+        return oid
+    return str(uuid.uuid5(_PORTAL_ORG_UUID_NAMESPACE, oid))
 
 
 def _timeout_s() -> float:
@@ -189,9 +246,10 @@ async def handle_chat(
     unchanged.
     """
     session_id = _load_session_id(db, chat_id)
+    company_id = _resolve_company_id(org_id)
     result = await _send(
         prompt=message,
-        company_id=_company_id(),
+        company_id=company_id,
         agent_id=_agent_id(),
         session_id=session_id,
     )
