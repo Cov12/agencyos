@@ -876,6 +876,133 @@ async def signout(
 
 
 ############################
+# Portal JWT Exchange
+############################
+
+
+class PortalTokenExchangeForm(BaseModel):
+    """Request body for portal JWT exchange."""
+    token: str
+
+
+@router.post("/portal-exchange", response_model=SessionUserResponse)
+async def portal_token_exchange(
+    request: Request,
+    response: Response,
+    form_data: PortalTokenExchangeForm,
+    db: Session = Depends(get_session),
+):
+    """
+    Exchange a WBIT Portal JWT for an Open WebUI session token.
+
+    This endpoint:
+    1. Validates the portal JWT using the shared JWT_SECRET
+    2. Extracts user info (email, name) from the portal JWT
+    3. Finds or creates the corresponding OWUI user
+    4. Returns a valid OWUI session token with {"id": user.id}
+
+    Called by AgencyOS /auth/callback after portal authentication.
+    """
+    import os
+    import jwt as pyjwt
+
+    portal_token = form_data.token
+
+    # Get the shared JWT secret (same one used by WBIT Portal)
+    jwt_secret = os.environ.get("JWT_SECRET", "")
+    if not jwt_secret:
+        log.error("JWT_SECRET not configured — cannot validate portal tokens")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Server misconfiguration: JWT_SECRET not set",
+        )
+
+    # Decode and validate the portal JWT
+    try:
+        payload = pyjwt.decode(portal_token, jwt_secret, algorithms=["HS256"])
+    except pyjwt.ExpiredSignatureError:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Portal token has expired. Please sign in again.",
+        )
+    except pyjwt.InvalidTokenError as e:
+        log.warning(f"Invalid portal JWT: {e}")
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Invalid portal token",
+        )
+
+    # Extract user info from portal JWT
+    # Portal JWT structure: { sub, email, name, org_id, org_slug, role, subscriptions, app_access }
+    email = payload.get("email", "").lower()
+    name = payload.get("name", "")
+    portal_user_id = payload.get("sub", "")  # Clerk user ID
+
+    if not email:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Portal token missing email claim",
+        )
+
+    if not name:
+        # Fallback: use email prefix as name
+        name = email.split("@")[0]
+
+    # Find or create the OWUI user
+    user = Users.get_user_by_email(email, db=db)
+
+    if not user:
+        # Auto-create user from portal JWT (trusted source)
+        log.info(f"Creating new OWUI user from portal JWT: {email}")
+
+        # Determine role: first user is admin, others are users
+        role = "admin" if not Users.has_users(db=db) else "user"
+
+        user = Auths.insert_new_auth(
+            email=email,
+            password=get_password_hash(str(uuid.uuid4())),  # Random password, not used
+            name=name,
+            profile_image_url="/user.png",
+            role=role,
+            db=db,
+        )
+
+        if not user:
+            raise HTTPException(
+                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                detail="Failed to create user account",
+            )
+
+        # Apply default group assignment
+        apply_default_group_assignment(
+            request.app.state.config.DEFAULT_GROUP_ID,
+            user.id,
+            db=db,
+        )
+
+        log.info(f"Created OWUI user {user.id} for portal user {portal_user_id}")
+    else:
+        # Update name if it changed in portal
+        if user.name != name:
+            Users.update_user_by_id(user.id, {"name": name}, db=db)
+            log.debug(f"Updated OWUI user {user.id} name to {name}")
+
+    # Create OWUI session token and return response
+    # This uses the standard create_session_response which creates a token with {"id": user.id}
+    session_data = create_session_response(
+        request=request,
+        user=user,
+        db=db,
+        response=response,
+        set_cookie=True,  # Also set the cookie for subsequent requests
+    )
+
+    log.info(f"Portal JWT exchanged for OWUI session: user={user.id} email={email}")
+
+    return session_data
+
+
+############################
 # AddUser
 ############################
 

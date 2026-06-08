@@ -28,5 +28,9 @@ export default defineConfig({
 	},
 	esbuild: {
 		pure: process.env.ENV === 'dev' ? [] : ['console.log', 'console.debug', 'console.error']
+	},
+	server: {
+		host: '127.0.0.1',
+		port: 5173
 	}
 });
