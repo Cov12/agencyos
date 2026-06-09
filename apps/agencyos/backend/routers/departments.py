@@ -87,12 +87,9 @@ async def department_chat(
     orchestrator: Orchestrator = Depends(get_orchestrator),
 ):
     """Send a message to a department's AI."""
-    # Company resolution keys on the Portal org id (the JWT's org_id claim, a CUID) —
-    # not the AgencyOS-internal org id in the query param. See cortex_bridge._resolve_company_id.
-    portal_org_id = getattr(request.state, "org_id", None) or org_id
     result = await orchestrator.route_message(
         message=data.message,
-        org_id=portal_org_id,
+        org_id=org_id,
         user_id=getattr(request.state, "user_id", "unknown"),
         department_slug=department_slug,
         chat_id=data.chat_id,
@@ -111,12 +108,9 @@ async def chief_chat(
     orchestrator: Orchestrator = Depends(get_orchestrator),
 ):
     """Send a message to the Chief AI (cross-department reasoning)."""
-    # Company resolution keys on the Portal org id (the JWT's org_id claim, a CUID) —
-    # not the AgencyOS-internal org id in the query param. See cortex_bridge._resolve_company_id.
-    portal_org_id = getattr(request.state, "org_id", None) or org_id
     result = await orchestrator.route_message(
         message=data.message,
-        org_id=portal_org_id,
+        org_id=org_id,
         user_id=getattr(request.state, "user_id", "unknown"),
         department_slug=None,
         chat_id=data.chat_id,
