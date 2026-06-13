@@ -48,6 +48,11 @@ class AgencyOSOrganization(Base):
     id = Column(String, primary_key=True, default=generate_id)
     name = Column(String, nullable=False)
     slug = Column(String, unique=True, nullable=False)  # orgslug for routing
+    # Portal org id (a CUID) — the cross-system identity the bridge runs through
+    # cortex_bridge._resolve_company_id to derive this org's Cortex company UUID, in
+    # lockstep with Cortex's resolvePortalCompany. NULL -> bridge falls back to the
+    # WBIT_COMPANY_ID pin. Populated by backfill (WBIT) / org provisioning (#66 Stage 2).
+    portal_org_id = Column(String, nullable=True)
     workpipe_account_id = Column(String, nullable=True)  # Link to WorkPipe
     plan = Column(String, default="starter")  # starter | growth | enterprise
     settings = Column(JSON, server_default="{}")
