@@ -141,6 +141,13 @@ def _portal_org_id_for(
         logger.warning(
             f"cortex_bridge: portal_org_id lookup failed for org {internal_org_id}: {e}"
         )
+        # If the SELECT aborted the transaction (e.g. code deployed before the
+        # 002 migration adds the column), roll back so the later session-save in
+        # this same request isn't poisoned. Falls back to the pin regardless.
+        try:
+            db.rollback()
+        except Exception:
+            pass
         return None
 
 
