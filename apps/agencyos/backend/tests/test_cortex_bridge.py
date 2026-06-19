@@ -98,6 +98,24 @@ async def test_send_omits_session_when_none(monkeypatch):
 
 
 @pytest.mark.asyncio
+async def test_send_includes_subaccount_when_present(monkeypatch):
+    monkeypatch.setenv("WBIT_BRIDGE_SECRET", "secret")
+    fake = _FakeClient(_FakeResponse(201, {"response": "x"}))
+    _patch_client(monkeypatch, fake)
+    await cortex_bridge._send("hi", "co", "ag", None, "sub-9")
+    assert fake.calls[0]["json"]["subAccountId"] == "sub-9"
+
+
+@pytest.mark.asyncio
+async def test_send_omits_subaccount_when_none(monkeypatch):
+    monkeypatch.setenv("WBIT_BRIDGE_SECRET", "secret")
+    fake = _FakeClient(_FakeResponse(201, {"response": "x"}))
+    _patch_client(monkeypatch, fake)
+    await cortex_bridge._send("hi", "co", "ag", None, None)
+    assert "subAccountId" not in fake.calls[0]["json"]
+
+
+@pytest.mark.asyncio
 async def test_send_non_2xx(monkeypatch):
     monkeypatch.setenv("WBIT_BRIDGE_SECRET", "secret")
     _patch_client(monkeypatch, _FakeClient(_FakeResponse(502, {})))
@@ -263,14 +281,18 @@ async def test_handle_chat_threads_resolved_company_to_send(monkeypatch):
     monkeypatch.setattr(cortex_bridge, "_save_session_id", lambda *a, **k: None)
     sent = {}
 
-    async def _fake_send(prompt, company_id, agent_id, session_id):
+    async def _fake_send(prompt, company_id, agent_id, session_id, sub_account_id=None):
         sent["company_id"] = company_id
+        sent["sub_account_id"] = sub_account_id
         return {"ok": True, "response": "hi", "sessionId": "s"}
 
     monkeypatch.setattr(cortex_bridge, "_send", _fake_send)
     monkeypatch.setattr(cortex_bridge, "_portal_org_id_for", lambda db, oid: _WBIT_CUID)
+    monkeypatch.setattr(cortex_bridge, "_subaccount_id_for", lambda db, oid: "sub-x")
     out = await cortex_bridge.handle_chat(
         "hi", org_id="internal", chat_id="c", db=object()
     )
     assert out["status"] == "ok"
     assert sent["company_id"] == _WBIT_DERIVED
+    # The org's bound sub-account is threaded through to the bridge call.
+    assert sent["sub_account_id"] == "sub-x"

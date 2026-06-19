@@ -151,6 +151,37 @@ def _portal_org_id_for(
         return None
 
 
+def _subaccount_id_for(
+    db: Optional[Session], internal_org_id: Optional[str]
+) -> Optional[str]:
+    """The org's bound WorkPipe sub-account id, used to partition the WBIT
+    assistant's long-term memory per sub-account (Cortex composes the Hermes
+    session key as companyId:subAccountId). This is the SAME sub-account whose CRM
+    data the agent operates on (see services/crm_adapter + workpipe), so memory
+    and operational scope stay aligned. None (no binding / unknown org) →
+    company/business scope, unchanged. Never raises into the chat path."""
+    if db is None or not internal_org_id:
+        return None
+    try:
+        from ..models.db import AgencyOSOrganization
+
+        row = (
+            db.query(AgencyOSOrganization)
+            .filter(AgencyOSOrganization.id == internal_org_id)
+            .one_or_none()
+        )
+        return (row.workpipe_account_id or None) if row else None
+    except Exception as e:  # never let memory scoping break a chat
+        logger.warning(
+            f"cortex_bridge: subaccount lookup failed for org {internal_org_id}: {e}"
+        )
+        try:
+            db.rollback()
+        except Exception:
+            pass
+        return None
+
+
 def _resolve_company_for_chat(
     db: Optional[Session], internal_org_id: Optional[str]
 ) -> str:
@@ -237,6 +268,7 @@ async def _send(
     company_id: str,
     agent_id: str,
     session_id: Optional[str],
+    sub_account_id: Optional[str] = None,
 ) -> dict:
     secret = _bridge_secret()
     if not secret:
@@ -247,6 +279,11 @@ async def _send(
     body = {"companyId": company_id, "agentId": agent_id, "prompt": prompt}
     if session_id:
         body["sessionId"] = session_id
+    # Partition the assistant's long-term memory per sub-account: Cortex composes
+    # the Hermes session key as companyId:subAccountId. Omitted when unset →
+    # company-level (business) scope, unchanged.
+    if sub_account_id:
+        body["subAccountId"] = sub_account_id
 
     headers = {"Content-Type": "application/json", "x-wbit-bridge-secret": secret}
 
@@ -299,6 +336,7 @@ async def handle_chat(
         company_id=_resolve_company_for_chat(db, org_id),
         agent_id=_agent_id(),
         session_id=session_id,
+        sub_account_id=_subaccount_id_for(db, org_id),
     )
 
     if not result.get("ok"):
