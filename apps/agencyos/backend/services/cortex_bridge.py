@@ -14,12 +14,26 @@ send it back -> bridge reuses it.
 
 import logging
 import os
+import re
+import uuid
 from typing import Optional
 
 import httpx
 from sqlalchemy.orm import Session
 
 logger = logging.getLogger("agencyos.cortex_bridge")
+
+# Per-org company resolution. These MUST stay in lockstep with Cortex's
+# resolvePortalCompany (wbit-cortex: server/src/routes/portal-callback.ts) so both
+# services derive the SAME company UUID for a given Portal org id. The namespace and
+# the PORTAL_COMPANY_OVERRIDES format are identical on both sides; Python's stdlib
+# uuid.uuid5 is RFC-4122 v5 (SHA-1) and matches Cortex's inline implementation exactly
+# (verified). NEVER change the namespace — it would remap every org's company.
+_PORTAL_ORG_UUID_NAMESPACE = uuid.UUID("1d3a9b6e-0c4f-4a2d-9e7b-5f8c2a1e6d40")
+_DEFAULT_PORTAL_COMPANY_ID = "00000000-0000-4000-a000-00000000c0de"
+_UUID_RE = re.compile(
+    r"^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$", re.IGNORECASE
+)
 
 # Points at the installed WBIT bridge plugin on Cortex prod; override per-env.
 _DEFAULT_BRIDGE_URL = (
@@ -57,10 +71,101 @@ def _agent_id() -> str:
     return os.environ.get("WBIT_AGENT_ID", _DEFAULT_AGENT_ID)
 
 
-def _company_id() -> str:
-    # v1: a single configured WBIT company. Per-org company resolution is blocked
-    # on #60 (Portal cuid != UUID collapses all orgs into the fallback company).
-    return os.environ.get("WBIT_COMPANY_ID", "")
+def _default_company_id() -> str:
+    """Company used when an org has no stored Portal id. WBIT_COMPANY_ID (if set)
+    stays the back-compat pin; otherwise the shared default company (…c0de)."""
+    return os.environ.get("WBIT_COMPANY_ID", "").strip() or _DEFAULT_PORTAL_COMPANY_ID
+
+
+def _is_uuid(value: str) -> bool:
+    return bool(_UUID_RE.match(value))
+
+
+def _company_overrides() -> dict:
+    """Parse PORTAL_COMPANY_OVERRIDES ("<orgId>=<companyUuid>,...") — same env and
+    format Cortex reads, so a Portal org pinned to an existing company (e.g. WBIT ->
+    …c0de) resolves identically on both sides. Split on the FIRST '=' only."""
+    raw = os.environ.get("PORTAL_COMPANY_OVERRIDES", "")
+    out: dict = {}
+    for pair in raw.split(","):
+        pair = pair.strip()
+        if not pair:
+            continue
+        idx = pair.find("=")
+        if idx <= 0:
+            continue
+        key = pair[:idx].strip()
+        val = pair[idx + 1 :].strip()
+        if key and _is_uuid(val):
+            out[key] = val
+    return out
+
+
+def _resolve_company_id(portal_org_id: Optional[str]) -> str:
+    """Map a Portal org id (CUID) to its Cortex company UUID. MUST match Cortex's
+    resolvePortalCompany:
+      - no id            -> default company (WBIT_COMPANY_ID env or …c0de)
+      - override match    -> pinned company UUID
+      - already a UUID    -> used as-is
+      - a CUID (today)    -> deterministic UUIDv5 (shared namespace)
+    """
+    oid = (portal_org_id or "").strip()
+    if not oid:
+        return _default_company_id()
+    override = _company_overrides().get(oid)
+    if override:
+        return override
+    if _is_uuid(oid):
+        return oid
+    return str(uuid.uuid5(_PORTAL_ORG_UUID_NAMESPACE, oid))
+
+
+def _portal_org_id_for(
+    db: Optional[Session], internal_org_id: Optional[str]
+) -> Optional[str]:
+    """Look up the stored Portal org id (CUID) for an AgencyOS-internal org id.
+    Returns None if db/id missing, org unknown, or column unset — caller then falls
+    back to the default company. Never raises into the chat path."""
+    if db is None or not internal_org_id:
+        return None
+    try:
+        from ..models.db import AgencyOSOrganization
+
+        row = (
+            db.query(AgencyOSOrganization)
+            .filter(AgencyOSOrganization.id == internal_org_id)
+            .one_or_none()
+        )
+        return (row.portal_org_id or None) if row else None
+    except Exception as e:  # never let company resolution break a chat
+        logger.warning(
+            f"cortex_bridge: portal_org_id lookup failed for org {internal_org_id}: {e}"
+        )
+        # If the SELECT aborted the transaction (e.g. code deployed before the
+        # 002 migration adds the column), roll back so the later session-save in
+        # this same request isn't poisoned. Falls back to the pin regardless.
+        try:
+            db.rollback()
+        except Exception:
+            pass
+        return None
+
+
+def _resolve_company_for_chat(
+    db: Optional[Session], internal_org_id: Optional[str]
+) -> str:
+    """Resolve the Cortex company UUID for one chat turn.
+
+    A chat request carries the AgencyOS-INTERNAL org id (the query param / OWUI
+    session org), NOT the Portal CUID — so we look up the org's stored Portal id and
+    run THAT through the shared resolver, yielding the same UUID Cortex provisioned
+    for the Portal org. An org with no stored Portal id (or an unknown org) falls
+    back to the WBIT_COMPANY_ID pin, preserving pre-#66 behavior. This is the fix
+    for the first #66 attempt, which mis-resolved the internal id directly."""
+    portal_org_id = _portal_org_id_for(db, internal_org_id)
+    if portal_org_id:
+        return _resolve_company_id(portal_org_id)
+    return _default_company_id()
 
 
 def _timeout_s() -> float:
@@ -191,7 +296,7 @@ async def handle_chat(
     session_id = _load_session_id(db, chat_id)
     result = await _send(
         prompt=message,
-        company_id=_company_id(),
+        company_id=_resolve_company_for_chat(db, org_id),
         agent_id=_agent_id(),
         session_id=session_id,
     )
