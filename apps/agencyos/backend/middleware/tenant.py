@@ -74,6 +74,32 @@ def get_tenant_session(
     """
     org_id: Optional[str] = getattr(request.state, "org_id", None)
 
+    # #66 Stage 2 (Approach B): idempotent backfill of portal_org_id for org rows that
+    # predate Stage-2 provisioning. Hook point = this dependency because it is the ONE
+    # place that already has BOTH (a) the parsed Portal auth (the Portal CUID) and (b) a
+    # live db session, and it runs on every tenant-scoped route.
+    #
+    # Mapping (verified against the codebase, NOT guessed): on a Portal-authed request
+    # the JWT's org_id claim is the Portal CUID (JWTAuthMiddleware puts it on
+    # request.state.portal_auth.org_id AND request.state.org_id), while the AgencyOS-
+    # INTERNAL org id travels as the `org_id` QUERY PARAM — the same value the chat path
+    # (cortex_bridge._resolve_company_for_chat) and employee_tabs use to scope data to a
+    # row (AgencyOSOrganization.id == org_id). So we map CUID -> row via that query param,
+    # NOT via request.state.org_id (which is the CUID on the JWT path, never the row id).
+    #
+    # Runs BEFORE the SET LOCAL below: the stamp commits, and SET LOCAL is transaction-
+    # scoped, so doing it first keeps the RLS setting fresh for the handler's queries.
+    # stamp_portal_org_id never raises (it rolls back + swallows), so a reconcile failure
+    # cannot 500 a normal request.
+    portal_auth = getattr(request.state, "portal_auth", None)
+    portal_cuid = getattr(portal_auth, "org_id", None) if portal_auth else None
+    if portal_cuid:
+        from ..services.organizations import OrganizationsService
+
+        internal_org_id = request.query_params.get("org_id")
+        if internal_org_id:
+            OrganizationsService.stamp_portal_org_id(db, internal_org_id, portal_cuid)
+
     if org_id:
         try:
             db.execute(

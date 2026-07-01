@@ -29,11 +29,17 @@ class OrganizationsService:
         slug: str,
         workpipe_account_id: Optional[str] = None,
         plan: str = "starter",
+        portal_org_id: Optional[str] = None,
     ) -> AgencyOSOrganization:
+        # #66 Stage 2 (Approach A): when this org is provisioned from a Portal-authed
+        # request, portal_org_id carries the Portal org CUID so the bridge later derives
+        # this org's OWN per-org Cortex company (cortex_bridge._resolve_company_id).
+        # Left NULL when unknown -> the bridge falls back to the WBIT_COMPANY_ID pin.
         org = AgencyOSOrganization(
             id=generate_id(),
             name=name,
             slug=slug,
+            portal_org_id=portal_org_id or None,
             workpipe_account_id=workpipe_account_id,
             plan=plan,
             created_at=now_ms(),
@@ -44,6 +50,51 @@ class OrganizationsService:
         db.refresh(org)
         log.info(f"Created org: {org.name} ({org.slug})")
         return org
+
+    @staticmethod
+    def stamp_portal_org_id(
+        db: Session, internal_org_id: str, portal_org_id: str
+    ) -> bool:
+        """#66 Stage 2 (Approach B): idempotent backfill of portal_org_id for org rows
+        that predate Stage-2 provisioning.
+
+        Stamps the Portal org CUID onto the row whose AgencyOS-INTERNAL id ==
+        internal_org_id, but ONLY when:
+          - the row exists,
+          - its portal_org_id is currently NULL (never overwrite -> idempotent), and
+          - it is not the WBIT-pinned 'default' org (left untouched by design; it is
+            backfilled by migration 002 and pinned to …c0de via PORTAL_COMPANY_OVERRIDES).
+
+        Returns True iff a row was stamped. Defensive by contract: this runs in the
+        request path (see middleware.tenant.get_tenant_session), so it MUST NOT raise —
+        it rolls back and swallows on any failure, mirroring
+        cortex_bridge._portal_org_id_for."""
+        if not internal_org_id or not portal_org_id:
+            return False
+        try:
+            row = (
+                db.query(AgencyOSOrganization)
+                .filter(AgencyOSOrganization.id == internal_org_id)
+                .one_or_none()
+            )
+            if row is None or row.portal_org_id is not None or row.slug == "default":
+                return False
+            row.portal_org_id = portal_org_id
+            row.updated_at = now_ms()
+            db.commit()
+            log.info(
+                f"Stamped portal_org_id on org {internal_org_id} ({row.slug})"
+            )
+            return True
+        except Exception as e:  # never let a reconcile break the request
+            log.warning(
+                f"stamp_portal_org_id failed for org {internal_org_id}: {e}"
+            )
+            try:
+                db.rollback()
+            except Exception:
+                pass
+            return False
 
     @staticmethod
     def get_org_by_id(db: Session, org_id: str) -> Optional[AgencyOSOrganization]:
