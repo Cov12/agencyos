@@ -107,6 +107,7 @@ class JWTAuthMiddleware(BaseHTTPMiddleware):
 
         portal_auth = None
         org_id = None
+        portal_token = None
 
         # Try Portal JWT first
         auth_header = request.headers.get("Authorization", "")
@@ -116,10 +117,17 @@ class JWTAuthMiddleware(BaseHTTPMiddleware):
             # Portal JWTs are shorter and have specific claims
             if JWT_SECRET and len(token) < 500:
                 portal_auth = decode_portal_jwt(token)
+                if portal_auth:
+                    # Retain the RAW, validated Portal JWT so downstream code can
+                    # authenticate outbound calls back to Portal as this user (e.g.
+                    # services/subaccount_sync -> Portal GET /api/subaccounts). Only
+                    # stashed once decode succeeds, so it is always a valid Portal token.
+                    portal_token = token
 
         if portal_auth:
             org_id = portal_auth.org_id
             request.state.portal_auth = portal_auth
+            request.state.portal_token = portal_token
             request.state.org_id = org_id
             request.state.user_id = portal_auth.user_id
             logger.info(
@@ -135,6 +143,7 @@ class JWTAuthMiddleware(BaseHTTPMiddleware):
                 or request.query_params.get("org_id")
             )
             request.state.portal_auth = None
+            request.state.portal_token = None
             request.state.org_id = org_id or None
             # user_id from OpenWebUI session (set by upstream middleware)
             request.state.user_id = getattr(request.state, "user_id", None)

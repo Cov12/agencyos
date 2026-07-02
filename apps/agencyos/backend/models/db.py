@@ -315,3 +315,50 @@ class AgencyOSCortexSession(Base):
 
     created_at = Column(BigInteger, default=now_ms)
     updated_at = Column(BigInteger, default=now_ms)
+
+
+####################
+# Sub-Account Mirror (Portal read model)
+####################
+
+
+class AgencyOSSubAccount(Base):
+    """Local mirror of an org's Portal sub-accounts (issue #27 / A1).
+
+    Portal is the source of truth for sub-account identity; AgencyOS runs its own
+    SQLite (webui.db) and cannot share Portal's Postgres, so it PULLs the list per
+    org (services/subaccount_sync.py -> Portal GET /api/subaccounts) and mirrors it
+    here. The PK is Portal's SubAccount.id (a CUID) stored VERBATIM — never minted
+    locally — so AgencyOS keys the SAME sub-account identity as WorkPipe/Drive/Portal
+    (WorkPipe's CRM rows are scoped by this exact `subAccountId`; see services/workpipe).
+
+    Distinct from AgencyOSOrganization.workpipe_account_id, which pins the ONE
+    sub-account a chat's memory/CRM scope binds to; this table is the full roster.
+
+    FK is on org_id -> agencyos_organization.id (the AgencyOS-INTERNAL id), matching
+    every other agencyos_* table (member/department/proposal/...), so consumers that
+    already hold the internal org id can list an org's sub-accounts directly. The
+    owning org's Portal CUID is also stored (portal_org_id) for cross-system tracing.
+    """
+
+    __tablename__ = "agencyos_subaccount"
+
+    # Portal SubAccount.id (CUID), stored verbatim. NOT default=generate_id.
+    id = Column(String, primary_key=True)
+    org_id = Column(
+        String, ForeignKey("agencyos_organization.id"), nullable=False
+    )  # owning AgencyOS org (internal id)
+    portal_org_id = Column(String, nullable=True)  # owning org's Portal CUID
+
+    name = Column(String, nullable=True)
+    slug = Column(String, nullable=True)
+    status = Column(String, nullable=True)
+
+    created_at = Column(BigInteger, default=now_ms)
+    updated_at = Column(BigInteger, default=now_ms)
+    synced_at = Column(BigInteger, default=now_ms)  # last time Portal confirmed this row
+
+    __table_args__ = (
+        Index("agencyos_subaccount_org_idx", "org_id"),
+        Index("agencyos_subaccount_portal_org_idx", "portal_org_id"),
+    )

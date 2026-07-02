@@ -100,6 +100,18 @@ def get_tenant_session(
         if internal_org_id:
             OrganizationsService.stamp_portal_org_id(db, internal_org_id, portal_cuid)
 
+            # A1 (#27): mirror the org's Portal sub-account roster locally. Same hook
+            # as the #66 stamp above — it is the ONE place with (a) the Portal CUID,
+            # (b) the AgencyOS-internal org id (the `org_id` query param), (c) the raw
+            # Portal JWT (stashed by JWTAuthMiddleware), and (d) a live db session.
+            # maybe_sync is throttled per-org and never raises, so an unreachable
+            # Portal just leaves the mirror as-is (business-scope-only), never a 500.
+            portal_token = getattr(request.state, "portal_token", None)
+            if portal_token:
+                from ..services.subaccount_sync import maybe_sync
+
+                maybe_sync(db, internal_org_id, portal_cuid, portal_token)
+
     if org_id:
         try:
             db.execute(
