@@ -78,6 +78,7 @@ def mount_agencyos(app: FastAPI) -> None:
             AgencyOSCortexApproval,
             AgencyOSEmployeeTab,
             AgencyOSCortexSession,
+            AgencyOSSubAccount,
         )
         # Create only agencyos_ tables, don't touch OpenWebUI tables
         agencyos_tables = [
@@ -90,6 +91,7 @@ def mount_agencyos(app: FastAPI) -> None:
             AgencyOSCortexApproval.__table__,
             AgencyOSEmployeeTab.__table__,
             AgencyOSCortexSession.__table__,
+            AgencyOSSubAccount.__table__,
         ]
         Base.metadata.create_all(bind=engine, tables=agencyos_tables)
         logger.info("AgencyOS database tables verified/created")

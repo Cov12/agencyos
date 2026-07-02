@@ -1,17 +1,26 @@
 <script lang="ts">
 	import { onMount } from 'svelte';
-	import { activeDeptId, activeDept, proposals, type Proposal, activeOrgId } from '$lib/stores/agencyos';
+	import {
+		activeDeptId,
+		activeDept,
+		proposals,
+		type Proposal,
+		activeOrgId
+	} from '$lib/stores/agencyos';
 	import { user } from '$lib/stores';
 	import {
 		sendChiefChat,
 		sendDepartmentChat,
-		getDepartments,
 		getEmployeeTabs,
+		getOrgSubAccounts,
+		selectOrgSubAccount,
 		type Proposal as ApiProposal,
-		type EmployeeTab
+		type EmployeeTab,
+		type OrgSubAccount
 	} from '$lib/apis/agencyos';
 	import GlassPanel from '$lib/components/agencyos/shared/GlassPanel.svelte';
 	import MaterialIcon from '$lib/components/agencyos/shared/MaterialIcon.svelte';
+	import SubAccountScopeSelector from '$lib/components/agencyos/SubAccountScopeSelector.svelte';
 	import VoiceMode from '$lib/components/agencyos/VoiceMode.svelte';
 
 	let voiceModeOpen = false;
@@ -34,6 +43,11 @@
 	let employeeTabs: EmployeeTab[] = [];
 	let selectedEmployee: EmployeeTab | null = null;
 	let loadingTabs = false;
+	let subAccounts: OrgSubAccount[] = [];
+	let activeSubAccountId: string | null = null;
+	let loadingSubAccounts = false;
+	let selectingSubAccount = false;
+	let lastLoadedOrgId: string | null = null;
 
 	// Single concierge front door (#45 collapse): every chat turn flows to the one
 	// WBIT Assistant via the chief endpoint → Cortex bridge. Per-department routing
@@ -45,10 +59,16 @@
 
 	$: if (!$activeDeptId) $activeDeptId = 'chief';
 
-	// Load employee tabs on mount
+	// Load employee tabs + sub-account scope on mount
 	onMount(async () => {
-		await loadEmployeeTabs();
+		await Promise.all([loadEmployeeTabs(), loadSubAccounts()]);
 	});
+
+	$: if ($activeOrgId && $activeOrgId !== lastLoadedOrgId) {
+		lastLoadedOrgId = $activeOrgId;
+		loadEmployeeTabs();
+		loadSubAccounts();
+	}
 
 	async function loadEmployeeTabs() {
 		const authToken = (($user as { token?: string } | undefined)?.token ?? localStorage.token) as string | undefined;
@@ -63,6 +83,45 @@
 			console.error('Failed to load employee tabs', error);
 		} finally {
 			loadingTabs = false;
+		}
+	}
+
+	async function loadSubAccounts() {
+		const authToken = (($user as { token?: string } | undefined)?.token ?? localStorage.token) as string | undefined;
+		if (!authToken || !$activeOrgId) {
+			subAccounts = [];
+			activeSubAccountId = null;
+			return;
+		}
+
+		loadingSubAccounts = true;
+		try {
+			const response = await getOrgSubAccounts(authToken, $activeOrgId);
+			subAccounts = response.subAccounts;
+			activeSubAccountId = response.activeSubAccountId;
+		} catch (error) {
+			subAccounts = [];
+			activeSubAccountId = null;
+			console.error('Failed to load sub-account scope', error);
+		} finally {
+			loadingSubAccounts = false;
+		}
+	}
+
+	async function handleSubAccountSelect(event: CustomEvent<{ subAccountId: string | null }>) {
+		const authToken = (($user as { token?: string } | undefined)?.token ?? localStorage.token) as string | undefined;
+		if (!authToken || !$activeOrgId || selectingSubAccount) return;
+
+		selectingSubAccount = true;
+		try {
+			const response = await selectOrgSubAccount(authToken, $activeOrgId, event.detail.subAccountId);
+			activeSubAccountId = response.selected;
+			messages = [];
+			chatId = undefined;
+		} catch (error) {
+			console.error('Failed to update sub-account scope', error);
+		} finally {
+			selectingSubAccount = false;
 		}
 	}
 
@@ -344,7 +403,7 @@
 	<!-- Main Chat Area -->
 	<main class="flex-1 flex flex-col relative z-10 min-w-0">
 		<!-- Top bar with hamburger + persona switcher -->
-		<div class="absolute top-0 left-0 right-0 z-20 flex items-center justify-center py-3 px-3 sm:px-6 bg-gradient-to-b from-[rgba(20,20,25,0.9)] to-transparent h-20 sm:h-24 pointer-events-none">
+		<div class="absolute top-0 left-0 right-0 z-20 flex flex-col items-center gap-2 py-3 px-3 sm:px-6 bg-gradient-to-b from-[rgba(20,20,25,0.9)] to-transparent min-h-20 sm:min-h-24 pointer-events-none">
 			<!-- Mobile hamburger -->
 			<button
 				class="pointer-events-auto absolute left-3 top-3 min-h-[44px] min-w-[44px] flex items-center justify-center rounded-xl text-white/60 hover:text-white hover:bg-white/10 transition-all md:hidden"
@@ -352,6 +411,14 @@
 			>
 				<MaterialIcon icon="menu" size={24} />
 			</button>
+
+			<SubAccountScopeSelector
+				subAccounts={subAccounts}
+				{activeSubAccountId}
+				loading={loadingSubAccounts}
+				disabled={loading || selectingSubAccount}
+				on:select={handleSubAccountSelect}
+			/>
 
 			<div class="bg-[#1c1c21]/80 backdrop-blur-md rounded-xl p-1 inline-flex shadow-lg ring-1 ring-white/10 pointer-events-auto overflow-x-auto max-w-[calc(100vw-6rem)] sm:max-w-none scrollbar-hide">
 				{#if selectedEmployee}

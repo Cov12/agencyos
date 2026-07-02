@@ -19,6 +19,13 @@ export interface OrgMember {
 	department_ids: string[];
 }
 
+export interface OrgSubAccount {
+	id: string;
+	name: string | null;
+	slug: string | null;
+	status: string | null;
+}
+
 export interface Department {
 	id: string;
 	slug: string;
@@ -155,6 +162,28 @@ export const getOrgMembers = async (token: string, orgId: string) => {
 	return apiCall<{ members: OrgMember[]; total: number }>(
 		`${AGENCYOS_API_BASE}/orgs/${orgId}/members`,
 		token
+	);
+};
+
+export const getOrgSubAccounts = async (token: string, orgId: string) => {
+	return apiCall<{ subAccounts: OrgSubAccount[]; activeSubAccountId: string | null }>(
+		`${AGENCYOS_API_BASE}/orgs/${orgId}/subaccounts`,
+		token
+	);
+};
+
+export const selectOrgSubAccount = async (
+	token: string,
+	orgId: string,
+	subAccountId: string | null
+) => {
+	return apiCall<{ selected: string | null }>(
+		`${AGENCYOS_API_BASE}/orgs/${orgId}/subaccounts/select`,
+		token,
+		{
+			method: 'POST',
+			body: JSON.stringify({ subAccountId })
+		}
 	);
 };
 

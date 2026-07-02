@@ -324,6 +324,7 @@ async def handle_chat(
     chat_id: Optional[str] = None,
     db: Optional[Session] = None,
     department_slug: Optional[str] = None,
+    sub_account_id: Optional[str] = None,
 ) -> dict:
     """
     Forward one chat turn to the WBIT Assistant and return a result dict in the
@@ -336,7 +337,7 @@ async def handle_chat(
         company_id=_resolve_company_for_chat(db, org_id),
         agent_id=_agent_id(),
         session_id=session_id,
-        sub_account_id=_subaccount_id_for(db, org_id),
+        sub_account_id=sub_account_id,
     )
 
     if not result.get("ok"):
