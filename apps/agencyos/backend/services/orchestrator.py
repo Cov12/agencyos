@@ -30,6 +30,7 @@ class Orchestrator:
         chat_id: Optional[str] = None,
         db: Optional[Session] = None,
         conversation_history: Optional[list[dict]] = None,
+        sub_account_id: Optional[str] = None,
     ) -> dict:
         """Forward the turn to the Cortex WBIT Assistant.
 
@@ -43,4 +44,5 @@ class Orchestrator:
             chat_id=chat_id,
             db=db,
             department_slug=department_slug,
+            sub_account_id=sub_account_id,
         )

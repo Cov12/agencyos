@@ -294,5 +294,6 @@ async def test_handle_chat_threads_resolved_company_to_send(monkeypatch):
     )
     assert out["status"] == "ok"
     assert sent["company_id"] == _WBIT_DERIVED
-    # The org's bound sub-account is threaded through to the bridge call.
-    assert sent["sub_account_id"] == "sub-x"
+    # Request-scoped selection owns sub-account routing now; missing selection
+    # degrades to business scope instead of falling back to an org-bound id.
+    assert sent["sub_account_id"] is None

@@ -31,9 +31,13 @@ import os
 from typing import Optional
 
 import httpx
+from sqlalchemy import func
 from sqlalchemy.orm import Session
 
 logger = logging.getLogger("agencyos.subaccount_sync")
+
+AGENCYOS_SUBACCOUNT_COOKIE = "agencyos_subaccount"
+BUSINESS_SCOPE_SENTINEL = "__business__"
 
 _DEFAULT_PORTAL_URL = "https://portal.wbit.app"
 _DEFAULT_TIMEOUT_S = 8.0
@@ -286,3 +290,52 @@ def list_subaccounts(db: Optional[Session], internal_org_id: Optional[str]) -> l
         except Exception:
             pass
         return []
+
+
+def list_active_subaccounts(db: Optional[Session], internal_org_id: Optional[str]) -> list:
+    """List only ACTIVE mirrored sub-accounts for an org, oldest-first.
+
+    Portal has historically emitted status values with varying case, so ACTIVE is
+    treated case-insensitively. Any DB failure degrades to [] instead of raising.
+    """
+    if db is None or not internal_org_id:
+        return []
+    try:
+        from ..models.db import AgencyOSSubAccount
+
+        return (
+            db.query(AgencyOSSubAccount)
+            .filter(AgencyOSSubAccount.org_id == internal_org_id)
+            .filter(func.lower(func.coalesce(AgencyOSSubAccount.status, "")) == "active")
+            .order_by(AgencyOSSubAccount.created_at.asc())
+            .all()
+        )
+    except Exception as e:
+        logger.warning(
+            "subaccount_sync: active-list failed for org %s: %s", internal_org_id, e
+        )
+        try:
+            db.rollback()
+        except Exception:
+            pass
+        return []
+
+
+def resolve_active_subaccount_id(
+    db: Optional[Session], internal_org_id: Optional[str], cookie_value: Optional[str]
+) -> Optional[str]:
+    """Resolve the chat's active sub-account from the selector cookie.
+
+    Semantics for AgencyOS chat:
+      * missing cookie => business scope (None)
+      * BUSINESS sentinel => explicit business scope (None)
+      * any id => only honored if it names an ACTIVE mirrored sub-account of this org
+
+    Invalid / stale / cross-org cookie values fail closed to business scope.
+    """
+    if not cookie_value or cookie_value == BUSINESS_SCOPE_SENTINEL:
+        return None
+    for row in list_active_subaccounts(db, internal_org_id):
+        if row.id == cookie_value:
+            return row.id
+    return None

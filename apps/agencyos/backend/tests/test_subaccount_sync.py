@@ -220,7 +220,7 @@ def test_extract_list_accepts_bare_array_and_envelopes():
     assert subaccount_sync._extract_list({"data": "notalist"}) is None
 
 
-# --- read helper -------------------------------------------------------------
+# --- read helpers ------------------------------------------------------------
 
 def test_list_subaccounts_returns_mirror(db, monkeypatch):
     org = _org(db)
@@ -235,3 +235,41 @@ def test_list_subaccounts_returns_mirror(db, monkeypatch):
     assert {r.id for r in listed} == {_SA1, _SA2}
     # Unknown org -> empty, never a crash.
     assert subaccount_sync.list_subaccounts(db, "no-such-org") == []
+
+
+def test_list_active_subaccounts_filters_case_insensitively(db, monkeypatch):
+    org = _org(db)
+    org_id = str(org.id)
+    payload = [
+        {"id": _SA1, "name": "Northwind", "status": "ACTIVE"},
+        {"id": _SA2, "name": "Globex", "status": "paused"},
+        {"id": "clsubacct0003mixedcase", "name": "Initech", "status": "Active"},
+    ]
+    monkeypatch.setattr(subaccount_sync, "_fetch_subaccounts", lambda token: payload)
+    subaccount_sync.sync_org_subaccounts(db, org_id, _PORTAL_CUID, _TOKEN)
+
+    listed = subaccount_sync.list_active_subaccounts(db, org_id)
+    assert {r.id for r in listed} == {_SA1, "clsubacct0003mixedcase"}
+
+
+def test_resolve_active_subaccount_id_degrades_invalid_state_to_business_scope(db, monkeypatch):
+    org = _org(db)
+    org_id = str(org.id)
+    payload = [
+        {"id": _SA1, "name": "Northwind", "status": "active"},
+        {"id": _SA2, "name": "Globex", "status": "paused"},
+    ]
+    monkeypatch.setattr(subaccount_sync, "_fetch_subaccounts", lambda token: payload)
+    subaccount_sync.sync_org_subaccounts(db, org_id, _PORTAL_CUID, _TOKEN)
+
+    assert subaccount_sync.resolve_active_subaccount_id(db, org_id, None) is None
+    assert (
+        subaccount_sync.resolve_active_subaccount_id(
+            db, org_id, subaccount_sync.BUSINESS_SCOPE_SENTINEL
+        )
+        is None
+    )
+    assert subaccount_sync.resolve_active_subaccount_id(db, org_id, _SA1) == _SA1
+    assert subaccount_sync.resolve_active_subaccount_id(db, org_id, _SA2) is None
+    assert subaccount_sync.resolve_active_subaccount_id(db, org_id, "missing") is None
+    assert subaccount_sync.resolve_active_subaccount_id(db, "other-org", _SA1) is None

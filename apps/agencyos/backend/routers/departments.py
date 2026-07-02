@@ -12,6 +12,10 @@ from sqlalchemy.orm import Session
 from ..middleware.tenant import get_tenant_session
 from ..models.db import AgencyOSDepartment
 from ..services.orchestrator import Orchestrator
+from ..services.subaccount_sync import (
+    AGENCYOS_SUBACCOUNT_COOKIE,
+    resolve_active_subaccount_id,
+)
 
 router = APIRouter(prefix="/api/agencyos/departments", tags=["agencyos-departments"])
 
@@ -77,6 +81,31 @@ async def get_department(
     }
 
 
+@router.post("/chief/chat")
+async def chief_chat(
+    org_id: str,
+    data: ChatRequest,
+    request: Request,
+    db: Session = Depends(get_tenant_session),
+    orchestrator: Orchestrator = Depends(get_orchestrator),
+):
+    """Send a message to the Chief AI (cross-department reasoning)."""
+    active_subaccount_id = resolve_active_subaccount_id(
+        db, org_id, request.cookies.get(AGENCYOS_SUBACCOUNT_COOKIE)
+    )
+    result = await orchestrator.route_message(
+        message=data.message,
+        org_id=org_id,
+        user_id=getattr(request.state, "user_id", "unknown"),
+        department_slug=None,
+        chat_id=data.chat_id,
+        db=db,
+        conversation_history=data.conversation_history,
+        sub_account_id=active_subaccount_id,
+    )
+    return result
+
+
 @router.post("/{department_slug}/chat")
 async def department_chat(
     department_slug: str,
@@ -87,6 +116,9 @@ async def department_chat(
     orchestrator: Orchestrator = Depends(get_orchestrator),
 ):
     """Send a message to a department's AI."""
+    active_subaccount_id = resolve_active_subaccount_id(
+        db, org_id, request.cookies.get(AGENCYOS_SUBACCOUNT_COOKIE)
+    )
     result = await orchestrator.route_message(
         message=data.message,
         org_id=org_id,
@@ -95,26 +127,6 @@ async def department_chat(
         chat_id=data.chat_id,
         db=db,
         conversation_history=data.conversation_history,
-    )
-    return result
-
-
-@router.post("/chief/chat")
-async def chief_chat(
-    org_id: str,
-    data: ChatRequest,
-    request: Request,
-    db: Session = Depends(get_tenant_session),
-    orchestrator: Orchestrator = Depends(get_orchestrator),
-):
-    """Send a message to the Chief AI (cross-department reasoning)."""
-    result = await orchestrator.route_message(
-        message=data.message,
-        org_id=org_id,
-        user_id=getattr(request.state, "user_id", "unknown"),
-        department_slug=None,
-        chat_id=data.chat_id,
-        db=db,
-        conversation_history=data.conversation_history,
+        sub_account_id=active_subaccount_id,
     )
     return result

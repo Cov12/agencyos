@@ -5,12 +5,20 @@ Multi-tenant org management — CRUD for orgs and members.
 """
 
 from fastapi import APIRouter, Depends, HTTPException, Request
+from fastapi.responses import JSONResponse
 from pydantic import BaseModel
 from typing import Optional
 from sqlalchemy.orm import Session
 
 from ..middleware.tenant import get_tenant_session
+from ..models.db import AgencyOSSubAccount
 from ..services.organizations import OrganizationsService
+from ..services.subaccount_sync import (
+    AGENCYOS_SUBACCOUNT_COOKIE,
+    BUSINESS_SCOPE_SENTINEL,
+    list_active_subaccounts,
+    resolve_active_subaccount_id,
+)
 
 router = APIRouter(prefix="/api/agencyos/orgs", tags=["agencyos-organizations"])
 
@@ -82,6 +90,81 @@ async def get_organization(
     if not org:
         raise HTTPException(status_code=404, detail="Organization not found")
     return {"id": org.id, "name": org.name, "slug": org.slug, "plan": org.plan, "settings": org.settings}
+
+
+@router.get("/{org_id}/subaccounts")
+async def list_org_subaccounts(
+    org_id: str,
+    request: Request,
+    db: Session = Depends(get_tenant_session),
+):
+    """List ACTIVE mirrored sub-accounts plus the current chat scope selection."""
+    org = OrganizationsService.get_org_by_id(db, org_id)
+    if not org:
+        raise HTTPException(status_code=404, detail="Organization not found")
+
+    active_subaccount_id = resolve_active_subaccount_id(
+        db, org_id, request.cookies.get(AGENCYOS_SUBACCOUNT_COOKIE)
+    )
+    subaccounts = list_active_subaccounts(db, org_id)
+    return {
+        "subAccounts": [
+            {
+                "id": s.id,
+                "name": s.name,
+                "slug": s.slug,
+                "status": s.status,
+            }
+            for s in subaccounts
+        ],
+        "activeSubAccountId": active_subaccount_id,
+    }
+
+
+@router.post("/{org_id}/subaccounts/select")
+async def select_org_subaccount(
+    org_id: str,
+    request: Request,
+    db: Session = Depends(get_tenant_session),
+):
+    """Persist the active AgencyOS chat scope in an httpOnly cookie."""
+    org = OrganizationsService.get_org_by_id(db, org_id)
+    if not org:
+        raise HTTPException(status_code=404, detail="Organization not found")
+
+    try:
+        body = await request.json()
+    except Exception:
+        body = {}
+
+    candidate = body.get("subAccountId") if isinstance(body, dict) else None
+    sub_account_id = candidate.strip() if isinstance(candidate, str) else None
+
+    cookie_value = BUSINESS_SCOPE_SENTINEL
+    selected: str | None = None
+    if sub_account_id:
+        subaccount = (
+            db.query(AgencyOSSubAccount)
+            .filter(AgencyOSSubAccount.org_id == org_id)
+            .filter(AgencyOSSubAccount.id == sub_account_id)
+            .first()
+        )
+        if not subaccount or (subaccount.status or "").lower() != "active":
+            raise HTTPException(status_code=404, detail="Sub-account not found in this organization")
+        cookie_value = str(subaccount.id)
+        selected = str(subaccount.id)
+
+    response = JSONResponse({"selected": selected})
+    response.set_cookie(
+        key=AGENCYOS_SUBACCOUNT_COOKIE,
+        value=cookie_value,
+        httponly=True,
+        secure=request.url.scheme == "https",
+        samesite="lax",
+        max_age=60 * 60 * 24 * 365,
+        path="/",
+    )
+    return response
 
 
 @router.get("/{org_id}/members")
