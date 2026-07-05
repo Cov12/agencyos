@@ -17,12 +17,14 @@
  */
 import type { ComponentType } from 'svelte';
 import {
+	getDashboardCortexHistory,
 	getDashboardWorkPipeContacts,
 	getDashboardWorkPipePipelines,
 	getDashboardWorkPipeStats,
 	getOrganization,
 	getOrgSubAccounts
 } from '$lib/apis/agencyos';
+import CortexRecentRunsWidget from './widgets/CortexRecentRunsWidget.svelte';
 import OrganizationWidget from './widgets/OrganizationWidget.svelte';
 import SubAccountsWidget from './widgets/SubAccountsWidget.svelte';
 import WorkPipeKpiWidget from './widgets/WorkPipeKpiWidget.svelte';
@@ -108,5 +110,16 @@ export const dashboardWidgets: DashboardWidget[] = [
 			return (await getDashboardWorkPipeContacts(token, orgId, subAccountId, { limit: 6 })).data;
 		},
 		component: WorkPipeRecentContactsWidget
+	},
+	{
+		id: 'cortex-recent-runs',
+		title: 'Recent Cortex activity',
+		icon: 'smart_toy',
+		span: 1,
+		// Cortex history works at business scope too — no sub-account gate needed;
+		// `null` subAccountId returns business-level runs from the /history verb.
+		load: async (token, orgId, subAccountId) =>
+			(await getDashboardCortexHistory(token, orgId, subAccountId, 8)).data,
+		component: CortexRecentRunsWidget
 	}
 ];

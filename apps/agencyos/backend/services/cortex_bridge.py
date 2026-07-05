@@ -63,6 +63,17 @@ def _bridge_url() -> str:
     return os.environ.get("CORTEX_BRIDGE_URL", _DEFAULT_BRIDGE_URL)
 
 
+def _history_url() -> str:
+    """The bridge's /history verb is a sibling of /chat on the same plugin base,
+    so we derive it from _bridge_url() by swapping the trailing /chat segment for
+    /history. This keeps one env override (CORTEX_BRIDGE_URL) driving both verbs —
+    no second URL to configure or drift."""
+    base = _bridge_url()
+    if base.endswith("/chat"):
+        return base[: -len("/chat")] + "/history"
+    return base.rstrip("/") + "/history"
+
+
 def _bridge_secret() -> str:
     return os.environ.get("WBIT_BRIDGE_SECRET", "")
 
@@ -361,3 +372,60 @@ def _shape(department_slug: Optional[str], content: str, status: str) -> dict:
         "usage": {},
         "status": status,
     }
+
+
+# --- read: recent run history (Dashboard D4b) --------------------------------
+
+async def fetch_history(
+    db: Optional[Session],
+    org_id: Optional[str],
+    sub_account_id: Optional[str] = None,
+    limit: int = 20,
+) -> list:
+    """Fetch recent Cortex runs for one org's company (and optional sub-account)
+    scope, for the read-only dashboard. Resolves companyId the SAME way chat does
+    (_resolve_company_for_chat), then POSTs to the bridge's /history verb with the
+    shared x-wbit-bridge-secret.
+
+    Defensive by design — this feeds a widget, never a mutation: it NEVER raises
+    into the request. Missing secret, timeout, transport error, non-2xx, or a
+    non-JSON/malformed body all degrade to [] (mirrors _send / _subaccount_id_for).
+    subAccountId is omitted when None → company/business scope, matching /chat.
+    """
+    secret = _bridge_secret()
+    if not secret:
+        logger.warning("cortex_bridge: history skipped — WBIT_BRIDGE_SECRET not configured")
+        return []
+
+    company_id = _resolve_company_for_chat(db, org_id)
+    if not company_id:
+        return []
+
+    body: dict = {"companyId": company_id, "limit": limit}
+    if sub_account_id:
+        body["subAccountId"] = sub_account_id
+
+    headers = {"Content-Type": "application/json", "x-wbit-bridge-secret": secret}
+
+    try:
+        async with httpx.AsyncClient(timeout=_timeout_s()) as client:
+            resp = await client.post(_history_url(), json=body, headers=headers)
+    except httpx.TimeoutException:
+        logger.warning("cortex_bridge: history request timed out")
+        return []
+    except httpx.RequestError as e:
+        logger.warning(f"cortex_bridge: history request error: {e}")
+        return []
+
+    if resp.status_code not in (200, 201):
+        logger.warning(f"cortex_bridge: history returned {resp.status_code}")
+        return []
+
+    try:
+        data = resp.json()
+    except ValueError:
+        logger.warning("cortex_bridge: history returned non-JSON body")
+        return []
+
+    runs = data.get("runs") if isinstance(data, dict) else None
+    return runs if isinstance(runs, list) else []
