@@ -19,7 +19,8 @@ from apps.agencyos.backend.services import workpipe_dashboard
 
 TEST_JWT_SECRET = "test-workpipe-dashboard-secret"
 TEST_ORG_ID = "org-dashboard-1"
-TEST_WORKPIPE_BUSINESS_ID = "biz_workpipe_123"
+TEST_WORKPIPE_BUSINESS_ID = "portal-biz-cuid-123"
+TEST_WORKPIPE_SUBACCOUNT_ID = "subaccount-bound-456"
 
 
 class _FakeResponse:
@@ -65,7 +66,8 @@ def db_session():
                 name="Acme",
                 slug="acme",
                 plan="starter",
-                workpipe_account_id=TEST_WORKPIPE_BUSINESS_ID,
+                portal_org_id=TEST_WORKPIPE_BUSINESS_ID,
+                workpipe_account_id=TEST_WORKPIPE_SUBACCOUNT_ID,
             )
         )
         session.commit()
@@ -147,6 +149,7 @@ def test_stats_route_mints_workpipe_jwt_and_threads_subaccount(client, monkeypat
     bearer = call["headers"]["Authorization"].split(" ", 1)[1]
     workpipe_token = pyjwt.decode(bearer, TEST_JWT_SECRET, algorithms=["HS256"])
     assert workpipe_token["org_id"] == TEST_WORKPIPE_BUSINESS_ID
+    assert workpipe_token["org_id"] != TEST_WORKPIPE_SUBACCOUNT_ID
     assert workpipe_token["user_id"] == "user-77"
     assert workpipe_token["sub"] == "user-77"
 
@@ -194,7 +197,7 @@ def test_pipelines_route_requires_workpipe_app_access(client, monkeypatch):
 
 
 def test_stats_route_returns_409_when_org_is_not_linked_to_workpipe(client, db_session, monkeypatch):
-    db_session.query(AgencyOSOrganization).filter_by(id=TEST_ORG_ID).update({"workpipe_account_id": None})
+    db_session.query(AgencyOSOrganization).filter_by(id=TEST_ORG_ID).update({"portal_org_id": None})
     db_session.commit()
 
     fake = _FakeClient(_FakeResponse(200, {"contacts": {}, "tickets": {}, "pipelines": {}}))

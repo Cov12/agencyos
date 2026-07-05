@@ -7,9 +7,18 @@
 		ticketsByLane: Record<string, number>;
 	};
 
-	export let data: PipelineBoardData | null = null;
+	type WorkPipeWidgetEmptyState = {
+		emptyState: string;
+	};
 
-	$: pipelines = data?.pipelines ?? [];
+	export let data: PipelineBoardData | WorkPipeWidgetEmptyState | null = null;
+
+	function hasEmptyState(value: PipelineBoardData | WorkPipeWidgetEmptyState | null): value is WorkPipeWidgetEmptyState {
+		return !!value && typeof value === 'object' && 'emptyState' in value;
+	}
+
+	$: boardData = hasEmptyState(data) ? null : data;
+	$: pipelines = boardData?.pipelines ?? [];
 	$: visiblePipelines = pipelines.slice(0, 3);
 
 	function lanesFor(pipeline: WorkPipePipeline): WorkPipeLane[] {
@@ -21,7 +30,7 @@
 	}
 
 	function laneTicketCount(lane: WorkPipeLane): number {
-		return data?.ticketsByLane?.[lane.id] ?? ticketsFor(lane).length;
+		return boardData?.ticketsByLane?.[lane.id] ?? ticketsFor(lane).length;
 	}
 
 	function laneValue(lane: WorkPipeLane): string {
@@ -34,7 +43,9 @@
 	}
 </script>
 
-{#if visiblePipelines.length > 0}
+{#if hasEmptyState(data)}
+	<p class="text-sm text-slate-500">{data.emptyState}</p>
+{:else if visiblePipelines.length > 0}
 	<div class="flex flex-col gap-4">
 		{#each visiblePipelines as pipeline}
 			<div class="rounded-xl border border-white/8 bg-white/[0.03] p-3 sm:p-4">

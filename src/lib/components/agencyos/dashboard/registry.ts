@@ -47,6 +47,10 @@ export type DashboardWidget = {
 	component: ComponentType;
 };
 
+const WORKPIPE_SCOPE_EMPTY_STATE = {
+	emptyState: 'Select a sub-account to view CRM.'
+} as const;
+
 export const dashboardWidgets: DashboardWidget[] = [
 	{
 		id: 'organization',
@@ -69,8 +73,10 @@ export const dashboardWidgets: DashboardWidget[] = [
 		title: 'WorkPipe KPIs',
 		icon: 'monitoring',
 		span: 1,
-		load: async (token, orgId, subAccountId) =>
-			(await getDashboardWorkPipeStats(token, orgId, subAccountId)).data,
+		load: async (token, orgId, subAccountId) => {
+			if (!subAccountId) return WORKPIPE_SCOPE_EMPTY_STATE;
+			return (await getDashboardWorkPipeStats(token, orgId, subAccountId)).data;
+		},
 		component: WorkPipeKpiWidget
 	},
 	{
@@ -79,6 +85,7 @@ export const dashboardWidgets: DashboardWidget[] = [
 		icon: 'view_kanban',
 		span: 2,
 		load: async (token, orgId, subAccountId) => {
+			if (!subAccountId) return WORKPIPE_SCOPE_EMPTY_STATE;
 			const [pipelines, stats] = await Promise.all([
 				getDashboardWorkPipePipelines(token, orgId, subAccountId),
 				getDashboardWorkPipeStats(token, orgId, subAccountId)
@@ -96,8 +103,10 @@ export const dashboardWidgets: DashboardWidget[] = [
 		title: 'Recent contacts',
 		icon: 'contacts',
 		span: 1,
-		load: async (token, orgId, subAccountId) =>
-			(await getDashboardWorkPipeContacts(token, orgId, subAccountId, { limit: 6 })).data,
+		load: async (token, orgId, subAccountId) => {
+			if (!subAccountId) return WORKPIPE_SCOPE_EMPTY_STATE;
+			return (await getDashboardWorkPipeContacts(token, orgId, subAccountId, { limit: 6 })).data;
+		},
 		component: WorkPipeRecentContactsWidget
 	}
 ];

@@ -1,9 +1,18 @@
 <script lang="ts">
 	import type { WorkPipeContactsData, WorkPipeContact } from '$lib/apis/agencyos';
 
-	export let data: WorkPipeContactsData | null = null;
+	type WorkPipeWidgetEmptyState = {
+		emptyState: string;
+	};
 
-	$: contacts = data?.contacts ?? [];
+	export let data: WorkPipeContactsData | WorkPipeWidgetEmptyState | null = null;
+
+	function hasEmptyState(value: WorkPipeContactsData | WorkPipeWidgetEmptyState | null): value is WorkPipeWidgetEmptyState {
+		return !!value && typeof value === 'object' && 'emptyState' in value;
+	}
+
+	$: contactsData = hasEmptyState(data) ? null : data;
+	$: contacts = contactsData?.contacts ?? [];
 
 	function formatDate(value?: string | null) {
 		if (!value) return 'Unknown date';
@@ -20,11 +29,13 @@
 	}
 </script>
 
-{#if contacts.length > 0}
+{#if hasEmptyState(data)}
+	<p class="text-sm text-slate-500">{data.emptyState}</p>
+{:else if contacts.length > 0}
 	<div class="flex flex-col gap-3">
 		<div class="flex items-baseline justify-between gap-3">
 			<p class="text-sm text-slate-400">Newest contacts in the active WorkPipe scope</p>
-			<p class="text-[11px] text-slate-500 whitespace-nowrap">{data?.total ?? contacts.length} total</p>
+			<p class="text-[11px] text-slate-500 whitespace-nowrap">{contactsData?.total ?? contacts.length} total</p>
 		</div>
 		<ul class="flex flex-col gap-2">
 			{#each contacts as contact}

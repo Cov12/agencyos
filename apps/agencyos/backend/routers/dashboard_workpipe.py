@@ -27,7 +27,7 @@ def _build_client(request: Request, db: Session, org_id: str) -> WorkPipeDashboa
 
     try:
         return WorkPipeDashboardClient(
-            workpipe_business_id=str(org.workpipe_account_id or ""),
+            workpipe_business_id=str(org.portal_org_id or ""),
             user_id=user_id or "agencyos-dashboard",
             role=getattr(portal_auth, "role", None),
             email=getattr(portal_auth, "email", None),
