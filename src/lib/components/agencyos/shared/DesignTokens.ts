@@ -30,17 +30,14 @@ export type NavItem = {
 	badge?: number;
 };
 
+// D1: read-only cross-ecosystem dashboard is now the AgencyOS landing surface.
+// Mock-only pages (Control Center, Notifications, Analytics, Multitask,
+// Knowledge Base, Proposals, Departments) are de-navved here — their component
+// files remain for a follow-up cleanup; they are simply no longer linked.
 export const navItems: NavItem[] = [
-	{ label: 'Home', href: '/agencyos', icon: 'grid_view' },
+	{ label: 'Dashboard', href: '/agencyos', icon: 'dashboard' },
 	{ label: 'Chat', href: '/agencyos/chat', icon: 'chat_bubble' },
 	{ label: 'Voice', href: '/agencyos/voice', icon: 'graphic_eq' },
-	{ label: 'Control Center', href: '/agencyos/control', icon: 'tune' },
-	{ label: 'Notifications', href: '/agencyos/notifications', icon: 'notifications' },
-	{ label: 'Analytics', href: '/agencyos/analytics', icon: 'monitoring' },
-	{ label: 'Multitask', href: '/agencyos/multitask', icon: 'splitscreen' },
-	{ label: 'Knowledge Base', href: '/agencyos/knowledge', icon: 'auto_stories' },
-	{ label: 'Proposals', href: '/agencyos/proposals', icon: 'description' },
-	{ label: 'Departments', href: '/agencyos/departments', icon: 'domain' },
 	{ label: 'Settings', href: '/agencyos/settings', icon: 'settings' },
 ];
 
