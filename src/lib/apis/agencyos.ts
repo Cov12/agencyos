@@ -81,6 +81,16 @@ export interface WorkPipeContactsData {
 	total: number;
 }
 
+export interface CortexRun {
+	id: string;
+	status: string;
+	agentId: string;
+	agentName?: string | null;
+	createdAt: string;
+	updatedAt?: string | null;
+	subAccountId?: string | null;
+}
+
 export interface Department {
 	id: string;
 	slug: string;
@@ -288,6 +298,20 @@ export const getDashboardWorkPipeContacts = async (
 	if (typeof options.offset === 'number') params.set('offset', String(options.offset));
 	return apiCall<{ data: WorkPipeContactsData }>(
 		`${AGENCYOS_API_BASE}/dashboard/workpipe/contacts?${params.toString()}`,
+		token
+	);
+};
+
+export const getDashboardCortexHistory = async (
+	token: string,
+	orgId: string,
+	subAccountId: string | null,
+	limit?: number
+) => {
+	const params = buildWorkPipeDashboardQuery(orgId, subAccountId);
+	if (typeof limit === 'number') params.set('limit', String(limit));
+	return apiCall<{ data: CortexRun[] }>(
+		`${AGENCYOS_API_BASE}/dashboard/cortex/history?${params.toString()}`,
 		token
 	);
 };
