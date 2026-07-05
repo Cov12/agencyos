@@ -16,9 +16,18 @@
  *   select, approve, reject, sync, …) from the dashboard — it is view-only.
  */
 import type { ComponentType } from 'svelte';
-import { getOrganization, getOrgSubAccounts } from '$lib/apis/agencyos';
+import {
+	getDashboardWorkPipeContacts,
+	getDashboardWorkPipePipelines,
+	getDashboardWorkPipeStats,
+	getOrganization,
+	getOrgSubAccounts
+} from '$lib/apis/agencyos';
 import OrganizationWidget from './widgets/OrganizationWidget.svelte';
 import SubAccountsWidget from './widgets/SubAccountsWidget.svelte';
+import WorkPipeKpiWidget from './widgets/WorkPipeKpiWidget.svelte';
+import WorkPipePipelineBoardWidget from './widgets/WorkPipePipelineBoardWidget.svelte';
+import WorkPipeRecentContactsWidget from './widgets/WorkPipeRecentContactsWidget.svelte';
 
 export type DashboardWidget = {
 	/** Stable unique key — used for keyed rendering + per-widget state. */
@@ -38,6 +47,10 @@ export type DashboardWidget = {
 	component: ComponentType;
 };
 
+const WORKPIPE_SCOPE_EMPTY_STATE = {
+	emptyState: 'Select a sub-account to view CRM.'
+} as const;
+
 export const dashboardWidgets: DashboardWidget[] = [
 	{
 		id: 'organization',
@@ -54,5 +67,46 @@ export const dashboardWidgets: DashboardWidget[] = [
 		span: 1,
 		load: (token, orgId) => getOrgSubAccounts(token, orgId),
 		component: SubAccountsWidget
+	},
+	{
+		id: 'workpipe-kpis',
+		title: 'WorkPipe KPIs',
+		icon: 'monitoring',
+		span: 1,
+		load: async (token, orgId, subAccountId) => {
+			if (!subAccountId) return WORKPIPE_SCOPE_EMPTY_STATE;
+			return (await getDashboardWorkPipeStats(token, orgId, subAccountId)).data;
+		},
+		component: WorkPipeKpiWidget
+	},
+	{
+		id: 'workpipe-pipeline-board',
+		title: 'Pipeline board',
+		icon: 'view_kanban',
+		span: 2,
+		load: async (token, orgId, subAccountId) => {
+			if (!subAccountId) return WORKPIPE_SCOPE_EMPTY_STATE;
+			const [pipelines, stats] = await Promise.all([
+				getDashboardWorkPipePipelines(token, orgId, subAccountId),
+				getDashboardWorkPipeStats(token, orgId, subAccountId)
+			]);
+			return {
+				pipelines: pipelines.data.pipelines,
+				count: pipelines.data.count,
+				ticketsByLane: stats.data.tickets.byLane
+			};
+		},
+		component: WorkPipePipelineBoardWidget
+	},
+	{
+		id: 'workpipe-recent-contacts',
+		title: 'Recent contacts',
+		icon: 'contacts',
+		span: 1,
+		load: async (token, orgId, subAccountId) => {
+			if (!subAccountId) return WORKPIPE_SCOPE_EMPTY_STATE;
+			return (await getDashboardWorkPipeContacts(token, orgId, subAccountId, { limit: 6 })).data;
+		},
+		component: WorkPipeRecentContactsWidget
 	}
 ];
