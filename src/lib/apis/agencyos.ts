@@ -26,6 +26,61 @@ export interface OrgSubAccount {
 	status: string | null;
 }
 
+export interface WorkPipeStats {
+	contacts: {
+		total: number;
+		recentCount: number;
+	};
+	tickets: {
+		total: number;
+		totalValue: number;
+		byLane: Record<string, number>;
+	};
+	pipelines: {
+		count: number;
+	};
+}
+
+export interface WorkPipeTicket {
+	id: string;
+	name?: string | null;
+	value?: number | string | null;
+}
+
+export interface WorkPipeLane {
+	id: string;
+	name?: string | null;
+	order?: number | null;
+	Ticket?: WorkPipeTicket[];
+	tickets?: WorkPipeTicket[];
+}
+
+export interface WorkPipePipeline {
+	id: string;
+	name: string;
+	Lane?: WorkPipeLane[];
+	lanes?: WorkPipeLane[];
+}
+
+export interface WorkPipePipelinesData {
+	pipelines: WorkPipePipeline[];
+	count: number;
+}
+
+export interface WorkPipeContact {
+	id: string;
+	name?: string | null;
+	email?: string | null;
+	phone?: string | null;
+	createdAt?: string | null;
+	updatedAt?: string | null;
+}
+
+export interface WorkPipeContactsData {
+	contacts: WorkPipeContact[];
+	total: number;
+}
+
 export interface Department {
 	id: string;
 	slug: string;
@@ -184,6 +239,56 @@ export const selectOrgSubAccount = async (
 			method: 'POST',
 			body: JSON.stringify({ subAccountId })
 		}
+	);
+};
+
+const buildWorkPipeDashboardQuery = (orgId: string, subAccountId?: string | null) => {
+	const params = new URLSearchParams({ org_id: orgId });
+	if (subAccountId) params.set('subAccountId', subAccountId);
+	return params;
+};
+
+export const getDashboardWorkPipeStats = async (
+	token: string,
+	orgId: string,
+	subAccountId: string | null
+) => {
+	const params = buildWorkPipeDashboardQuery(orgId, subAccountId);
+	return apiCall<{ data: WorkPipeStats }>(
+		`${AGENCYOS_API_BASE}/dashboard/workpipe/stats?${params.toString()}`,
+		token
+	);
+};
+
+export const getDashboardWorkPipePipelines = async (
+	token: string,
+	orgId: string,
+	subAccountId: string | null
+) => {
+	const params = buildWorkPipeDashboardQuery(orgId, subAccountId);
+	return apiCall<{ data: WorkPipePipelinesData }>(
+		`${AGENCYOS_API_BASE}/dashboard/workpipe/pipelines?${params.toString()}`,
+		token
+	);
+};
+
+export const getDashboardWorkPipeContacts = async (
+	token: string,
+	orgId: string,
+	subAccountId: string | null,
+	options: {
+		search?: string;
+		limit?: number;
+		offset?: number;
+	} = {}
+) => {
+	const params = buildWorkPipeDashboardQuery(orgId, subAccountId);
+	if (options.search) params.set('search', options.search);
+	if (typeof options.limit === 'number') params.set('limit', String(options.limit));
+	if (typeof options.offset === 'number') params.set('offset', String(options.offset));
+	return apiCall<{ data: WorkPipeContactsData }>(
+		`${AGENCYOS_API_BASE}/dashboard/workpipe/contacts?${params.toString()}`,
+		token
 	);
 };
 
