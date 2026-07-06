@@ -99,7 +99,10 @@ def _mint_portal_token(app_access):
     payload = {
         "sub": "user-77",
         "user_id": "user-77",
-        "org_id": "portal-org-cuid",
+        # #41: the JWT's org_id claim (Portal CUID) must match the seeded org's
+        # portal_org_id, else require_org_access binds the requested internal org_id
+        # to a different Portal org and 403s before the handler runs.
+        "org_id": TEST_WORKPIPE_BUSINESS_ID,
         "role": "owner",
         "email": "cov@example.com",
         "app_access": app_access,
@@ -200,14 +203,19 @@ def test_stats_route_returns_409_when_org_is_not_linked_to_workpipe(client, db_s
     db_session.query(AgencyOSOrganization).filter_by(id=TEST_ORG_ID).update({"portal_org_id": None})
     db_session.commit()
 
+    # #41: with portal_org_id NULL no Portal caller can bind to this org (require_org_access
+    # would 403 before the handler). The "not linked to WorkPipe" 409 is reachable only on
+    # the non-prod dev/header path, so drive it there — the org-unlinked 409 semantics are
+    # unchanged, only the auth path used to reach the handler.
+    monkeypatch.setenv("AGENCYOS_DEV_ALLOW_HEADER_AUTH", "1")
+
     fake = _FakeClient(_FakeResponse(200, {"contacts": {}, "tickets": {}, "pipelines": {}}))
     _patch_httpx(monkeypatch, fake)
 
-    token = _mint_portal_token(["AGENCYOS", "WORKPIPE"])
     response = client.get(
         "/api/agencyos/dashboard/workpipe/stats",
         params={"org_id": TEST_ORG_ID},
-        headers={"Authorization": f"Bearer {token}"},
+        headers={"X-Org-Id": TEST_ORG_ID},
     )
 
     assert response.status_code == 409, response.text

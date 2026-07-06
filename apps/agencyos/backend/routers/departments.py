@@ -10,6 +10,7 @@ from typing import Optional
 from sqlalchemy.orm import Session
 
 from ..middleware.tenant import get_tenant_session
+from ..middleware.deps import require_org_access
 from ..models.db import AgencyOSDepartment
 from ..services.orchestrator import Orchestrator
 from ..services.subaccount_sync import (
@@ -17,7 +18,11 @@ from ..services.subaccount_sync import (
     resolve_active_subaccount_id,
 )
 
-router = APIRouter(prefix="/api/agencyos/departments", tags=["agencyos-departments"])
+router = APIRouter(
+    prefix="/api/agencyos/departments",
+    tags=["agencyos-departments"],
+    dependencies=[Depends(require_org_access)],  # #41: bind org_id to caller's Portal org
+)
 
 # Singleton orchestrator
 _orchestrator = None

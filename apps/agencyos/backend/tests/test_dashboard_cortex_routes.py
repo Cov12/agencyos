@@ -106,7 +106,10 @@ def _mint_portal_token(app_access):
     payload = {
         "sub": "user-77",
         "user_id": "user-77",
-        "org_id": "portal-org-cuid",
+        # #41: the JWT's org_id claim (Portal CUID) must match the seeded org's
+        # portal_org_id, else require_org_access binds the requested internal org_id
+        # to a different Portal org and 403s before the handler runs.
+        "org_id": TEST_PORTAL_ORG_ID,
         "role": "owner",
         "email": "cov@example.com",
         "app_access": app_access,
