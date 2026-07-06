@@ -332,3 +332,63 @@ def test_same_tenant_org_id_is_200(client, method, url, params):
     )
     resp = client.request(method, url, params=params, headers=headers)
     assert resp.status_code == 200, f"{url} blocked same-tenant caller: {resp.status_code} {resp.text}"
+
+
+# ── #43 (security): a NULL-portal_org_id legacy org is NOT claimable on a read ─
+#
+# The trust-on-first-use gap: get_tenant_session used to stamp portal_org_id onto a
+# NULL row BEFORE require_org_access ran, so the first Portal caller to reference an
+# unstamped legacy org CLAIMED it and was served its data. With the request-path
+# stamp removed, that org now fails closed (require_org_access → 403) and its
+# portal_org_id stays NULL — ownership is never assigned on a data-serving read.
+
+ORG_LEGACY = "org-legacy-internal-null"
+
+
+def test_null_portal_org_is_403_and_not_claimed_on_portal_read(client, db_session):
+    """A Portal caller referencing an unstamped (portal_org_id NULL) org is 403'd, and
+    the org is NOT stamped/claimed as a side effect of the read (fail-closed)."""
+    db_session.add(
+        AgencyOSOrganization(
+            id=ORG_LEGACY, name="Legacy", slug="legacy-null", plan="starter",
+            portal_org_id=None,
+        )
+    )
+    db_session.commit()
+
+    headers = _auth(
+        org_cuid=CUID_A, user_id=USER_A,
+        app_access=["AGENCYOS", "CORTEX", "WORKPIPE"],
+    )
+    # Path-param route (/orgs/{id}) and a query-param scoped route both fail closed.
+    resp = client.get(f"/api/agencyos/orgs/{ORG_LEGACY}", headers=headers)
+    assert resp.status_code == 403, resp.text
+    resp2 = client.get(
+        "/api/agencyos/proposals/", params={"org_id": ORG_LEGACY}, headers=headers
+    )
+    assert resp2.status_code == 403, resp2.text
+
+    # The read did NOT assign ownership: the row is still NULL (never claimed).
+    db_session.expire_all()
+    row = db_session.query(AgencyOSOrganization).filter_by(id=ORG_LEGACY).one()
+    assert row.portal_org_id is None
+
+
+# ── #43 / #71-A: org creation on the Portal path stamps portal_org_id ─────────
+
+
+def test_create_org_on_portal_path_stamps_caller_cuid(client, db_session):
+    """POST /orgs on a Portal-authed request provisions the row with the caller's
+    Portal CUID (ownership assigned AT provisioning, the only place it should be)."""
+    headers = _auth(org_cuid=CUID_A, user_id=USER_A, app_access=["AGENCYOS"])
+    resp = client.post(
+        "/api/agencyos/orgs/",
+        json={"name": "Fresh Co", "slug": "fresh-co"},
+        headers=headers,
+    )
+    assert resp.status_code == 200, resp.text
+    new_id = resp.json()["organization"]["id"]
+
+    db_session.expire_all()
+    row = db_session.query(AgencyOSOrganization).filter_by(id=new_id).one()
+    assert row.portal_org_id == CUID_A
