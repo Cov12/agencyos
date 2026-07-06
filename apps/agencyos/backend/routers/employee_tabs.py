@@ -13,14 +13,16 @@ from sqlalchemy.orm import Session
 from starlette.requests import Request
 
 from ..middleware.tenant import get_tenant_session
-from ..middleware.deps import require_app_access
+from ..middleware.deps import require_app_access, require_org_access
 from ..services.employee_tabs import EmployeeTabsService
 from ..services.cortex_adapter import CortexError
 
 router = APIRouter(
     prefix="/api/agencyos/employee-tabs",
     tags=["agencyos-employee-tabs"],
-    dependencies=[Depends(require_app_access("CORTEX"))],
+    # #41: require_app_access first (app entitlement), then require_org_access
+    # (bind the requested org_id to the caller's Portal org).
+    dependencies=[Depends(require_app_access("CORTEX")), Depends(require_org_access)],
 )
 
 # Service instance (singleton)

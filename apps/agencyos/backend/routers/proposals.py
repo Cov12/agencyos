@@ -12,10 +12,15 @@ from sqlalchemy.orm import Session
 from starlette.requests import Request
 
 from ..middleware.tenant import get_tenant_session
+from ..middleware.deps import require_org_access
 from ..services.proposals import ProposalsService
 from ..services.proposal_executor import ProposalExecutor
 
-router = APIRouter(prefix="/api/agencyos/proposals", tags=["agencyos-proposals"])
+router = APIRouter(
+    prefix="/api/agencyos/proposals",
+    tags=["agencyos-proposals"],
+    dependencies=[Depends(require_org_access)],  # #41: bind org_id to caller's Portal org
+)
 
 
 class CreateProposalRequest(BaseModel):

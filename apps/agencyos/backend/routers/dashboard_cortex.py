@@ -11,14 +11,16 @@ from __future__ import annotations
 from fastapi import APIRouter, Depends, Query
 from sqlalchemy.orm import Session
 
-from ..middleware.deps import require_app_access
+from ..middleware.deps import require_app_access, require_org_access
 from ..middleware.tenant import get_tenant_session
 from ..services import cortex_bridge
 
 router = APIRouter(
     prefix="/api/agencyos/dashboard/cortex",
     tags=["agencyos-dashboard-cortex"],
-    dependencies=[Depends(require_app_access("CORTEX"))],
+    # #41: require_app_access first (app entitlement), then require_org_access
+    # (bind the requested org_id to the caller's Portal org).
+    dependencies=[Depends(require_app_access("CORTEX")), Depends(require_org_access)],
 )
 
 

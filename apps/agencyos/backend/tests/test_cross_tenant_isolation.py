@@ -36,6 +36,8 @@ from apps.agencyos.backend.models.db import (
 )
 from apps.agencyos.backend.routers import (
     cortex_approvals,
+    dashboard_cortex,
+    dashboard_workpipe,
     departments,
     employee_tabs,
     organizations,
@@ -132,6 +134,8 @@ def app(db_session, monkeypatch):
     app.include_router(proposals.router)
     app.include_router(cortex_approvals.router)
     app.include_router(employee_tabs.router)
+    app.include_router(dashboard_workpipe.router)
+    app.include_router(dashboard_cortex.router)
     return app
 
 
@@ -263,3 +267,68 @@ def test_list_subaccounts_scoped_to_org(client):
     ids = [s["id"] for s in resp.json()["subAccounts"]]
     assert ids == [SUB_B]
     assert SUB_A not in ids
+
+
+# ── #41 org-binding: A's JWT + B's INTERNAL org_id → 403 on every scoped route ─
+#
+# The pre-#41 vuln: require_app_access only proved the JWT granted the app; nothing
+# proved the requested internal org_id belonged to the caller's Portal org. So an
+# authed user of org A could read org B's rows by passing B's internal id. Each case
+# below sends user A's Portal JWT (CUID_A) but targets org B's internal id (ORG_B);
+# require_org_access must 403 BEFORE the handler runs (no leak, and — for the
+# dashboard routes — no outbound call). ALL Portal apps granted so the block is
+# require_org_access, not require_app_access.
+
+# (method, url, extra query params). org B is targeted via the `org_id` query param
+# (or the {org_id} path segment for /orgs/{id}).
+_CROSS_TENANT_ROUTES = [
+    ("get", "/api/agencyos/departments/", {"org_id": ORG_B}),
+    ("get", "/api/agencyos/proposals/", {"org_id": ORG_B}),
+    ("get", "/api/agencyos/proposals/stats", {"org_id": ORG_B}),
+    ("get", "/api/agencyos/cortex-approvals/", {"org_id": ORG_B}),
+    ("get", "/api/agencyos/employee-tabs/", {"org_id": ORG_B}),
+    ("get", "/api/agencyos/dashboard/workpipe/stats", {"org_id": ORG_B}),
+    ("get", "/api/agencyos/dashboard/cortex/history", {"org_id": ORG_B}),
+    # /orgs/{id}: internal id in the PATH (no org_id query param).
+    ("get", f"/api/agencyos/orgs/{ORG_B}", None),
+    ("get", f"/api/agencyos/orgs/{ORG_B}/subaccounts", {"org_id": ORG_B}),
+    ("get", f"/api/agencyos/orgs/{ORG_B}/members", {"org_id": ORG_B}),
+]
+
+
+@pytest.mark.parametrize("method,url,params", _CROSS_TENANT_ROUTES)
+def test_cross_tenant_org_id_is_403(client, method, url, params):
+    """User A (CUID_A) passing org B's internal id is fail-closed to 403 everywhere."""
+    headers = _auth(
+        org_cuid=CUID_A, user_id=USER_A,
+        app_access=["AGENCYOS", "CORTEX", "WORKPIPE"],
+    )
+    resp = client.request(method, url, params=params, headers=headers)
+    assert resp.status_code == 403, f"{url} leaked cross-tenant: {resp.status_code} {resp.text}"
+
+
+# ── Positive path: A's JWT + A's OWN internal org_id → 200 (binding lets it through) ─
+#
+# Same DB-backed, no-outbound routes as above, proving require_org_access is a binding
+# and not a blanket deny. (The dashboard routes' 200 path needs mocked outbound HTTP;
+# it is covered in test_dashboard_{cortex,workpipe}_routes.py, updated for #41.)
+_SAME_TENANT_OK_ROUTES = [
+    ("get", "/api/agencyos/departments/", {"org_id": ORG_A}),
+    ("get", "/api/agencyos/proposals/", {"org_id": ORG_A}),
+    ("get", "/api/agencyos/cortex-approvals/", {"org_id": ORG_A}),
+    ("get", "/api/agencyos/employee-tabs/", {"org_id": ORG_A}),
+    ("get", f"/api/agencyos/orgs/{ORG_A}", None),
+    ("get", f"/api/agencyos/orgs/{ORG_A}/subaccounts", {"org_id": ORG_A}),
+    ("get", f"/api/agencyos/orgs/{ORG_A}/members", {"org_id": ORG_A}),
+]
+
+
+@pytest.mark.parametrize("method,url,params", _SAME_TENANT_OK_ROUTES)
+def test_same_tenant_org_id_is_200(client, method, url, params):
+    """User A (CUID_A) on A's OWN internal org_id still gets through (200)."""
+    headers = _auth(
+        org_cuid=CUID_A, user_id=USER_A,
+        app_access=["AGENCYOS", "CORTEX", "WORKPIPE"],
+    )
+    resp = client.request(method, url, params=params, headers=headers)
+    assert resp.status_code == 200, f"{url} blocked same-tenant caller: {resp.status_code} {resp.text}"

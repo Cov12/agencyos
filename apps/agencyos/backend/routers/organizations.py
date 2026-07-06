@@ -11,6 +11,7 @@ from typing import Optional
 from sqlalchemy.orm import Session
 
 from ..middleware.tenant import get_tenant_session
+from ..middleware.deps import require_org_access
 from ..models.db import AgencyOSSubAccount
 from ..services.organizations import OrganizationsService
 from ..services.subaccount_sync import (
@@ -94,7 +95,7 @@ async def create_organization(
     }
 
 
-@router.get("/{org_id}")
+@router.get("/{org_id}", dependencies=[Depends(require_org_access)])
 async def get_organization(
     org_id: str,
     db: Session = Depends(get_tenant_session),
@@ -106,7 +107,7 @@ async def get_organization(
     return {"id": org.id, "name": org.name, "slug": org.slug, "plan": org.plan, "settings": org.settings}
 
 
-@router.get("/{org_id}/subaccounts")
+@router.get("/{org_id}/subaccounts", dependencies=[Depends(require_org_access)])
 async def list_org_subaccounts(
     org_id: str,
     request: Request,
@@ -135,7 +136,7 @@ async def list_org_subaccounts(
     }
 
 
-@router.post("/{org_id}/subaccounts/select")
+@router.post("/{org_id}/subaccounts/select", dependencies=[Depends(require_org_access)])
 async def select_org_subaccount(
     org_id: str,
     request: Request,
@@ -181,7 +182,7 @@ async def select_org_subaccount(
     return response
 
 
-@router.get("/{org_id}/members")
+@router.get("/{org_id}/members", dependencies=[Depends(require_org_access)])
 async def list_members(
     org_id: str,
     db: Session = Depends(get_tenant_session),
@@ -197,7 +198,7 @@ async def list_members(
     }
 
 
-@router.post("/{org_id}/members")
+@router.post("/{org_id}/members", dependencies=[Depends(require_org_access)])
 async def add_member(
     org_id: str,
     data: AddMemberRequest,

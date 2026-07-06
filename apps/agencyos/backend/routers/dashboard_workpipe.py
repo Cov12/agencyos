@@ -5,7 +5,7 @@ from __future__ import annotations
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from sqlalchemy.orm import Session
 
-from ..middleware.deps import require_app_access
+from ..middleware.deps import require_app_access, require_org_access
 from ..middleware.tenant import get_tenant_session
 from ..services.organizations import OrganizationsService
 from ..services.workpipe_dashboard import WorkPipeDashboardClient, WorkPipeDashboardError
@@ -13,7 +13,9 @@ from ..services.workpipe_dashboard import WorkPipeDashboardClient, WorkPipeDashb
 router = APIRouter(
     prefix="/api/agencyos/dashboard/workpipe",
     tags=["agencyos-dashboard-workpipe"],
-    dependencies=[Depends(require_app_access("WORKPIPE"))],
+    # #41: require_app_access first (app entitlement), then require_org_access
+    # (bind the requested org_id to the caller's Portal org).
+    dependencies=[Depends(require_app_access("WORKPIPE")), Depends(require_org_access)],
 )
 
 

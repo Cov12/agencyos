@@ -102,7 +102,14 @@ def db_session():
 
 
 @pytest.fixture
-def app(db_session):
+def app(db_session, monkeypatch):
+    # #41: these routes now carry require_org_access. This suite drives the legacy
+    # single-tenant/dev path — no JWTAuthMiddleware, so request.state.portal_auth is
+    # never set. Opt into the SAME non-prod dev escape hatch require_app_access uses
+    # (AGENCYOS_DEV_ALLOW_HEADER_AUTH=1) so the org-binding dep passes through the
+    # header path exactly as before instead of fail-closing to 403.
+    monkeypatch.setenv("AGENCYOS_DEV_ALLOW_HEADER_AUTH", "1")
+
     app = FastAPI()
 
     @app.middleware("http")
