@@ -109,6 +109,29 @@ class OrganizationsService:
         return db.query(AgencyOSOrganization).order_by(AgencyOSOrganization.created_at.desc()).all()
 
     @staticmethod
+    def list_orgs_for_portal(
+        db: Session, portal_org_id: str
+    ) -> list[AgencyOSOrganization]:
+        """#35 (GA-safety): list ONLY the org(s) owned by the caller's Portal org.
+
+        RLS is a no-op on SQLite, so cross-tenant isolation rests on explicit
+        filters. The bare list endpoint previously returned EVERY org (name/slug/
+        plan) to any authenticated caller — a cross-tenant enumeration leak, and the
+        frontend's resolveOrganization() fallback would then pick orgs[0], which
+        could belong to a DIFFERENT tenant. On the Portal-authed path the JWT's
+        org_id claim is the Portal CUID, stored here as AgencyOSOrganization
+        .portal_org_id, so we scope by it. Returns [] for an unknown/blank CUID
+        (fail-closed to no data, never another tenant's rows)."""
+        if not portal_org_id:
+            return []
+        return (
+            db.query(AgencyOSOrganization)
+            .filter(AgencyOSOrganization.portal_org_id == portal_org_id)
+            .order_by(AgencyOSOrganization.created_at.desc())
+            .all()
+        )
+
+    @staticmethod
     def add_member(
         db: Session,
         org_id: str,
