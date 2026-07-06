@@ -38,10 +38,24 @@ class AddMemberRequest(BaseModel):
 
 @router.get("/")
 async def list_organizations(
+    request: Request,
     db: Session = Depends(get_tenant_session),
 ):
-    """List all organizations (for user org resolution)."""
-    orgs = OrganizationsService.list_orgs(db)
+    """List organizations for user org resolution.
+
+    #35 (GA-safety): on the Portal-authed path this is scoped to the caller's own
+    Portal org (portal_auth.org_id == AgencyOSOrganization.portal_org_id) so it can
+    no longer enumerate every tenant's orgs. The unauthenticated dev/OWUI-internal
+    fallback (no portal_auth — e.g. the X-Org-Id header path, which is gated to
+    non-prod by require_app_access elsewhere) keeps the legacy list-all behavior so
+    single-tenant/dev flows are unaffected.
+    """
+    portal_auth = getattr(request.state, "portal_auth", None)
+    portal_cuid = getattr(portal_auth, "org_id", None) if portal_auth else None
+    if portal_cuid:
+        orgs = OrganizationsService.list_orgs_for_portal(db, portal_cuid)
+    else:
+        orgs = OrganizationsService.list_orgs(db)
     return [
         {"id": o.id, "name": o.name, "slug": o.slug, "plan": o.plan}
         for o in orgs

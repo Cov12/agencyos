@@ -330,7 +330,8 @@ class AgencyOSSubAccount(Base):
     org (services/subaccount_sync.py -> Portal GET /api/subaccounts) and mirrors it
     here. The PK is Portal's SubAccount.id (a CUID) stored VERBATIM — never minted
     locally — so AgencyOS keys the SAME sub-account identity as WorkPipe/Drive/Portal
-    (WorkPipe's CRM rows are scoped by this exact `subAccountId`; see services/workpipe).
+    (WorkPipe's CRM rows are scoped by this exact `subAccountId`; see services/crm_adapter
+    and services/workpipe_dashboard).
 
     Distinct from AgencyOSOrganization.workpipe_account_id, which pins the ONE
     sub-account a chat's memory/CRM scope binds to; this table is the full roster.
