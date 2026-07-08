@@ -26,19 +26,53 @@ import jwt as pyjwt
 import pytest
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
+from sqlalchemy import create_engine
+from sqlalchemy.orm import sessionmaker
+from sqlalchemy.pool import StaticPool
+
+from apps.agencyos.backend.middleware.tenant import get_tenant_session
+from apps.agencyos.backend.models.db import Base
 
 
 TEST_JWT_SECRET = "test-secret-for-pr6-router-smoke-tests"
 
 
-@pytest.fixture(scope="module")
-def app():
+@pytest.fixture
+def db_session():
+    # The gates now resolve get_tenant_session (require_app_access / require_org_access
+    # read AgencyOSMember + the org's app_access on the OWUI path -- #45). Provide an
+    # in-memory DB so dependency resolution doesn't 500 before the gate logic runs.
+    engine = create_engine(
+        "sqlite://",
+        connect_args={"check_same_thread": False},
+        poolclass=StaticPool,
+    )
+    Base.metadata.create_all(engine)
+    Session = sessionmaker(bind=engine)
+    session = Session()
+    # Seed the org the Portal-JWT tests reference (org_id="test-org"); require_org_access
+    # (#41, legacy path) needs a row whose portal_org_id matches the JWT's org_id claim.
+    from apps.agencyos.backend.models.db import AgencyOSOrganization
+    session.add(AgencyOSOrganization(
+        id="test-org", name="Test Org", slug="test-org", plan="starter",
+        portal_org_id="test-org",
+    ))
+    session.commit()
+    try:
+        yield session
+    finally:
+        session.close()
+
+
+@pytest.fixture
+def app(db_session):
     """Two CORTEX-gated routers, no JWT middleware. Tier 2/3 use this."""
     from apps.agencyos.backend.routers import cortex_approvals, employee_tabs
 
     a = FastAPI()
     a.include_router(cortex_approvals.router)
     a.include_router(employee_tabs.router)
+    a.dependency_overrides[get_tenant_session] = lambda: db_session
     return a
 
 
@@ -48,7 +82,7 @@ def client(app):
 
 
 @pytest.fixture
-def app_with_jwt(monkeypatch):
+def app_with_jwt(monkeypatch, db_session):
     """Two CORTEX-gated routers + the un-gated proposals router + JWTAuthMiddleware.
 
     Tier 4 uses this for the JWT path. Tier 5 reuses it to prove proposals/
@@ -67,6 +101,7 @@ def app_with_jwt(monkeypatch):
     a.include_router(cortex_approvals.router)
     a.include_router(employee_tabs.router)
     a.include_router(proposals.router)
+    a.dependency_overrides[get_tenant_session] = lambda: db_session
     return a
 
 

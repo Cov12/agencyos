@@ -56,6 +56,13 @@ class AgencyOSOrganization(Base):
     workpipe_account_id = Column(String, nullable=True)  # Link to WorkPipe
     plan = Column(String, default="starter")  # starter | growth | enterprise
     settings = Column(JSON, server_default="{}")
+    # Per-org Portal app entitlement, cached from the Portal JWT at portal-exchange
+    # (routers/auths.py portal_token_exchange). This is what require_app_access reads
+    # on the OWUI-session path (middleware/deps.py) — the OWUI session token carries no
+    # app_access claim, so the entitlement must live server-side per org. Mirrors why
+    # Cortex persists app_access. Added to existing prod rows by migration 005; NULL/[]
+    # means "no apps entitled" (fail-closed).
+    app_access = Column(JSON, server_default="[]")
 
     created_at = Column(BigInteger, default=now_ms)
     updated_at = Column(BigInteger, default=now_ms)
