@@ -11,7 +11,7 @@ from typing import Optional
 from sqlalchemy.orm import Session
 
 from ..middleware.tenant import get_tenant_session
-from ..middleware.deps import require_org_access
+from ..middleware.deps import require_org_access, require_org_admin
 from ..models.db import AgencyOSSubAccount
 from ..services.organizations import OrganizationsService
 from ..services.subaccount_sync import (
@@ -198,17 +198,35 @@ async def list_members(
     }
 
 
-@router.post("/{org_id}/members", dependencies=[Depends(require_org_access)])
+@router.post(
+    "/{org_id}/members",
+    dependencies=[Depends(require_org_access), Depends(require_org_admin)],
+)
 async def add_member(
     org_id: str,
     data: AddMemberRequest,
     db: Session = Depends(get_tenant_session),
 ):
-    """Add a member to an organization."""
+    """Add a member to an organization.
+
+    AUTHZ (issue #45 PR-3): require_org_access binds {org_id} to the CALLER (IDOR),
+    and require_org_admin additionally requires the CALLER be an admin/owner of this
+    org — closing the privilege-escalation hole where any member (or, under the dev-flag
+    grace, any authed user) could mint arbitrary user_ids with arbitrary roles into the
+    tenant. The two identities are DISTINCT: the guards authorize the CALLER (resolved
+    from the Portal JWT / OWUI session token), while data.user_id below is the ADDED
+    user (who the authorized admin is inviting) — never the caller.
+
+    NB (out of scope, UX follow-up): data.user_id must already be an OWUI user.id; there
+    is no 'add by email' resolution here.
+    """
     org = OrganizationsService.get_org_by_id(db, org_id)
     if not org:
         raise HTTPException(status_code=404, detail="Organization not found")
 
+    # data.user_id is the ADDED user (body-supplied), legitimate now that the CALLER is
+    # an authorized admin of {org_id}. (Kept as add_member — not upsert_member — to
+    # preserve department_ids, which upsert_member does not carry; see deliverable note.)
     member = OrganizationsService.add_member(
         db, org_id=org_id, user_id=data.user_id,
         role=data.role, department_ids=data.department_ids,

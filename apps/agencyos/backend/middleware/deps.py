@@ -171,6 +171,121 @@ def require_app_access(required_app: str):
     return _dep
 
 
+# Roles that may ADMINISTER an org's membership (add/manage members). Two role
+# vocabularies converge here:
+#   - the internal OrgRole hierarchy's top role — "executive" (models/organization.py:15,
+#     the enum is privilege-ordered executive > department_head > manager > member);
+#   - the Portal-JWT admin-ish set jwt_auth.PortalAuthContext treats as privileged —
+#     "owner"/"admin" (jwt_auth.py:51, has_department_access short-circuits for them).
+# The #45/#46 tests also seed the privileged AgencyOSMember with role="owner"
+# (test_owui_session_auth.py:103), so the OWUI DB path must honour "owner" too. Anything
+# below (department_head/manager/member) is a NON-admin and cannot add members.
+#
+# NOTE (role-model bootstrapping, #45 PR-3): create_org does NOT seat its creator as a
+# member (services/organizations.py:26-52) and no prod code writes an executive/owner
+# AgencyOSMember yet, so on the pure OWUI path this gate is fail-closed until the first
+# admin is provisioned — the AGENCYOS_DEV_ALLOW_HEADER_AUTH rollout grace covers that
+# window exactly as #46 intends. Seeding the org creator as an admin is a UX follow-up.
+ORG_ADMIN_ROLES = frozenset({"executive", "owner", "admin"})
+
+
+def require_org_admin(
+    request: Request,
+    db: Session = Depends(get_tenant_session),
+):
+    """Authorize the CALLER as an admin/owner of the requested org (issue #45 PR-3).
+
+    Layered ON TOP of require_org_access (both are composed on the route): require_org_access
+    already binds the requested internal org_id to the caller's real identity (the #41/#45
+    IDOR fix) and applies the rollout grace; this dep ADDITIONALLY requires the caller's
+    ROLE for THIS org be in ORG_ADMIN_ROLES. It gates privileged mutations — currently
+    POST /orgs/{org_id}/members, which otherwise let ANY member (or, under the dev-flag
+    grace, any authed user) mint arbitrary user_ids with arbitrary roles into the tenant
+    (privilege escalation / tenant pollution).
+
+    This authorizes the CALLER only; the body user_id (who is being ADDED) is handled in
+    the route handler and is deliberately NOT the identity checked here.
+
+    Identity resolution reuses the #46 helpers (portal_auth / _resolve_owui_user_id /
+    get_user_orgs) and mirrors require_org_access's three paths. The escape-hatch / grace
+    behavior is kept IDENTICAL to require_org_access (#46): an un-provisioned caller (no
+    membership) or no identity at all is allowed ONLY with AGENCYOS_DEV_ALLOW_HEADER_AUTH=1,
+    else 403 — we never 403 the grace path differently than #46 does, so the rollout grace
+    still lets prod work. A PROVISIONED member is past the grace window, so a non-admin
+    member is 403 even with the flag on (that is the privilege-escalation fix, not the
+    grace path).
+    """
+    portal_auth = getattr(request.state, "portal_auth", None)
+    # Same org-id resolution require_org_access uses: query param first, else path param.
+    requested_org_id = (
+        request.query_params.get("org_id")
+        or request.path_params.get("org_id")
+    )
+
+    # 1. LEGACY Portal-JWT path: the JWT carries the caller's role — require it be
+    #    admin-ish. (require_org_access, alongside, already bound the org to the caller's
+    #    Portal CUID, so here we only add the role gate.)
+    if portal_auth is not None:
+        if getattr(portal_auth, "role", None) not in ORG_ADMIN_ROLES:
+            logger.info(
+                "require_org_admin denied: portal user=%s org=%s role=%s not admin",
+                portal_auth.user_id, portal_auth.org_id,
+                getattr(portal_auth, "role", None),
+            )
+            raise HTTPException(status_code=403, detail="Org admin access required")
+        return
+
+    owui_user_id = _resolve_owui_user_id(request)
+
+    # 3. No identity at all — mirror require_org_access's grace exactly.
+    if not owui_user_id:
+        if _escape_hatch_enabled():
+            logger.warning(
+                "require_org_admin: no portal_auth and no OWUI user; allowing via "
+                "AGENCYOS_DEV_ALLOW_HEADER_AUTH escape hatch (org_id=%s)",
+                requested_org_id,
+            )
+            return
+        logger.info(
+            "require_org_admin denied: unauthenticated (no portal_auth, no OWUI user)"
+        )
+        raise HTTPException(status_code=403, detail="Org admin access required")
+
+    # 2. OWUI-session path: resolve the CALLER's membership and require their role for
+    #    THIS org be admin-ish. The caller = the OWUI user.id from the session token; it
+    #    is distinct from the body user_id (the user being added) — see the route handler.
+    members = OrganizationsService.get_user_orgs(db, owui_user_id)
+    if not members:
+        # Un-provisioned caller — rollout grace (or fail-closed with the flag off),
+        # identical to require_org_access (#46).
+        if _escape_hatch_enabled():
+            logger.warning(
+                "require_org_admin: OWUI user=%s has no membership; allowing via "
+                "AGENCYOS_DEV_ALLOW_HEADER_AUTH rollout grace (org_id=%s)",
+                owui_user_id, requested_org_id,
+            )
+            return
+        logger.info(
+            "require_org_admin denied: OWUI user=%s has no membership", owui_user_id
+        )
+        raise HTTPException(status_code=403, detail="Org admin access required")
+
+    # Caller HAS membership rows: find their row for the requested org. A non-member of
+    # THIS org resolves to caller_role=None (already 403'd by require_org_access's IDOR
+    # bound; re-asserted here), and a member whose role is NOT admin-ish is 403 — the core
+    # fix: a plain 'member' can no longer add members.
+    caller_role = next(
+        (m.role for m in members if m.org_id == requested_org_id), None
+    )
+    if caller_role not in ORG_ADMIN_ROLES:
+        logger.info(
+            "require_org_admin denied: OWUI user=%s org=%s caller_role=%s not admin",
+            owui_user_id, requested_org_id, caller_role,
+        )
+        raise HTTPException(status_code=403, detail="Org admin access required")
+    return
+
+
 def require_org_access(
     request: Request,
     db: Session = Depends(get_tenant_session),
