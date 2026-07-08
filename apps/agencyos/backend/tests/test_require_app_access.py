@@ -10,8 +10,16 @@ from apps.agencyos.backend.middleware.jwt_auth import PortalAuthContext
 
 
 def _make_request(portal_auth):
-    """Build a minimal Request-like object exposing .state."""
-    return SimpleNamespace(state=SimpleNamespace(portal_auth=portal_auth))
+    """Build a minimal Request-like object exposing .state, .headers, .cookies.
+
+    headers/cookies are empty so _resolve_owui_user_id (#45) finds no OWUI token and
+    returns None -> the portal_auth-None tests exercise the dev-flag / deny path.
+    """
+    return SimpleNamespace(
+        state=SimpleNamespace(portal_auth=portal_auth),
+        headers={},
+        cookies={},
+    )
 
 
 class TestRequireAppAccess:

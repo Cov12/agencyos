@@ -101,6 +101,81 @@ class OrganizationsService:
         return db.query(AgencyOSOrganization).filter_by(id=org_id).first()
 
     @staticmethod
+    def get_org_by_portal_id(
+        db: Session, portal_org_id: str
+    ) -> Optional[AgencyOSOrganization]:
+        """Single-org lookup by Portal org CUID — the exchange's provisioning key
+        (#45 PR-1). Same identity #35's list_orgs_for_portal scopes by; this returns
+        the one row (or None) so portal-exchange can find-or-create. Returns None for a
+        blank CUID (fail-closed)."""
+        if not portal_org_id:
+            return None
+        return (
+            db.query(AgencyOSOrganization)
+            .filter(AgencyOSOrganization.portal_org_id == portal_org_id)
+            .first()
+        )
+
+    @staticmethod
+    def set_org_app_access(
+        db: Session, org_id: str, app_access: list[str]
+    ) -> bool:
+        """Cache the org's Portal app entitlement onto AgencyOSOrganization.app_access
+        (#45 PR-1). Written at portal-exchange so require_app_access can read it on the
+        OWUI-session path, where the session token carries no app_access claim. Idempotent
+        (overwrites with the latest claim on every re-login = persist-at-exchange
+        freshness). Returns True iff a row was updated."""
+        row = (
+            db.query(AgencyOSOrganization)
+            .filter(AgencyOSOrganization.id == org_id)
+            .one_or_none()
+        )
+        if row is None:
+            return False
+        row.app_access = list(app_access or [])
+        row.updated_at = now_ms()
+        db.commit()
+        return True
+
+    @staticmethod
+    def upsert_member(
+        db: Session,
+        org_id: str,
+        user_id: str,
+        role: str = "member",
+    ) -> AgencyOSMember:
+        """Idempotent one-row-per-(org_id, user_id) membership write (#45 PR-1).
+
+        Unlike add_member (which always INSERTs), this find-or-updates so a re-login
+        through portal-exchange refreshes the role without duplicating rows. user_id is
+        ALWAYS the resolved OWUI user.id (AgencyOSMember.user_id 'References OpenWebUI
+        user'), never a JWT/body claim."""
+        member = (
+            db.query(AgencyOSMember)
+            .filter_by(org_id=org_id, user_id=user_id)
+            .first()
+        )
+        if member is None:
+            member = AgencyOSMember(
+                id=generate_id(),
+                org_id=org_id,
+                user_id=user_id,
+                role=role or "member",
+                department_ids=[],
+                created_at=now_ms(),
+            )
+            db.add(member)
+            db.commit()
+            db.refresh(member)
+            log.info(f"Provisioned member {user_id} in org {org_id} as {role}")
+        elif role and member.role != role:
+            member.role = role
+            db.commit()
+            db.refresh(member)
+            log.info(f"Updated member {user_id} role in org {org_id} to {role}")
+        return member
+
+    @staticmethod
     def get_org_by_slug(db: Session, slug: str) -> Optional[AgencyOSOrganization]:
         return db.query(AgencyOSOrganization).filter_by(slug=slug).first()
 
