@@ -189,6 +189,14 @@ def require_app_access(required_app: str):
 ORG_ADMIN_ROLES = frozenset({"executive", "owner", "admin"})
 
 
+def _role_is_admin(role) -> bool:
+    """Case-insensitive admin-role check. Portal's JWT sends UPPERCASE roles
+    (MemberRole = OWNER | ADMIN | MEMBER); AgencyOSMember may hold the normalized
+    lowercase form (written at portal-exchange) or a native lowercase role. Compare
+    case-insensitively so an actual OWNER/ADMIN is recognized regardless of casing."""
+    return bool(role) and str(role).lower() in ORG_ADMIN_ROLES
+
+
 def require_org_admin(
     request: Request,
     db: Session = Depends(get_tenant_session),
@@ -226,7 +234,7 @@ def require_org_admin(
     #    admin-ish. (require_org_access, alongside, already bound the org to the caller's
     #    Portal CUID, so here we only add the role gate.)
     if portal_auth is not None:
-        if getattr(portal_auth, "role", None) not in ORG_ADMIN_ROLES:
+        if not _role_is_admin(getattr(portal_auth, "role", None)):
             logger.info(
                 "require_org_admin denied: portal user=%s org=%s role=%s not admin",
                 portal_auth.user_id, portal_auth.org_id,
@@ -277,7 +285,7 @@ def require_org_admin(
     caller_role = next(
         (m.role for m in members if m.org_id == requested_org_id), None
     )
-    if caller_role not in ORG_ADMIN_ROLES:
+    if not _role_is_admin(caller_role):
         logger.info(
             "require_org_admin denied: OWUI user=%s org=%s caller_role=%s not admin",
             owui_user_id, requested_org_id, caller_role,
