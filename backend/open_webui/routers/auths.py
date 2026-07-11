@@ -1023,7 +1023,9 @@ async def portal_token_exchange(
                 db,
                 org_id=org.id,
                 user_id=user.id,
-                role=payload.get("role", "member") or "member",
+                # Normalize the Portal role (UPPERCASE OWNER/ADMIN/MEMBER) to the
+                # lowercase AgencyOS vocabulary require_org_admin checks against.
+                role=(payload.get("role") or "member").lower(),
             )
             # Cache the org's Portal app entitlement — this is what require_app_access
             # reads on the OWUI-session path (the session token has no app_access claim).

@@ -92,7 +92,7 @@ def db_session():
         # admin of A (role="owner" is the admin-ish set — mirrors the #46 seed and
         # jwt_auth's owner/admin privilege check).
         session.add(AgencyOSMember(id="m-admin-a", org_id=ORG_A, user_id=USER_ADMIN_A,
-                                   role="owner", created_at=now_ms()))
+                                   role="OWNER", created_at=now_ms()))
         # non-admin member of A.
         session.add(AgencyOSMember(id="m-member-a", org_id=ORG_A, user_id=USER_MEMBER_A,
                                    role="member", created_at=now_ms()))
@@ -213,7 +213,7 @@ def _portal_auth(**kwargs):
 
 def test_portal_admin_can_add_member_to_own_org(client, db_session):
     """A Portal JWT with role=owner for CUID_A adds a member to ORG_A (200)."""
-    headers = _portal_auth(org_cuid=CUID_A, user_id="portal-admin", role="owner")
+    headers = _portal_auth(org_cuid=CUID_A, user_id="portal-admin", role="OWNER")
     resp = _post_add_member(client, ORG_A, headers)
     assert resp.status_code == 200, resp.text
     assert resp.json()["user_id"] == ADDED_USER
@@ -230,7 +230,7 @@ def test_portal_nonadmin_cannot_add_member(client, db_session):
 def test_portal_admin_cannot_add_to_foreign_org(client, db_session):
     """A Portal admin for CUID_A targeting ORG_B's INTERNAL id is 403 — require_org_access
     binds the internal org to the caller's Portal CUID (ORG_B.portal_org_id == CUID_B)."""
-    headers = _portal_auth(org_cuid=CUID_A, user_id="portal-admin", role="owner")
+    headers = _portal_auth(org_cuid=CUID_A, user_id="portal-admin", role="OWNER")
     resp = _post_add_member(client, ORG_B, headers)
     assert resp.status_code == 403, resp.text
     assert OrganizationsService.get_member(db_session, ORG_B, ADDED_USER) is None
