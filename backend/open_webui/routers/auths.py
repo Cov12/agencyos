@@ -987,65 +987,12 @@ async def portal_token_exchange(
             Users.update_user_by_id(user.id, {"name": name}, db=db)
             log.debug(f"Updated OWUI user {user.id} name to {name}")
 
-    # --- AgencyOS provisioning (#45 PR-1): persist membership + per-org app_access ---
-    # The OWUI session token minted below carries only {"id": user.id} — no Portal
-    # claims. So the AgencyOS auth gates (apps/agencyos/backend/middleware/deps.py) must
-    # read membership and app entitlement from the DB, keyed on the OWUI user.id. We
-    # persist both HERE, at exchange, from the VALIDATED Portal JWT `payload`. Freshness =
-    # persist-at-exchange: every re-login refreshes these rows (no webhook/TTL for now).
-    #
-    # user_id written is ALWAYS the resolved OWUI user.id (never a body/claim field);
-    # AgencyOSMember.user_id 'References OpenWebUI user' (apps/.../models/db.py).
-    #
-    # Defensive by contract: ANY failure here (import, DB, provisioning) MUST NOT break
-    # the exchange/login — a user still gets their OWUI session even if AgencyOS
-    # provisioning hiccups. Log + continue.
-    try:
-        portal_org_cuid = payload.get("org_id")
-        if portal_org_cuid:
-            from apps.agencyos.backend.services.organizations import (
-                OrganizationsService,
-            )
+    # --- AgencyOS provisioning (#45 / agencyos#50): membership + per-org app_access ---
+    # Shared helper — keeps this in sync with routers/auth_callback.py::portal_auth_callback,
+    # the server-side SSO callback prod actually uses. Never breaks the exchange/login.
+    from apps.agencyos.backend.services.organizations import OrganizationsService
 
-            # Resolve/provision the AgencyOS org for the Portal CUID. Reuses the same
-            # find-by-portal-cuid / create-with-portal_org_id path org provisioning uses.
-            org = OrganizationsService.get_org_by_portal_id(db, portal_org_cuid)
-            if org is None:
-                org_slug = payload.get("org_slug") or portal_org_cuid
-                org = OrganizationsService.create_org(
-                    db,
-                    name=payload.get("org_name") or org_slug,
-                    slug=org_slug,
-                    portal_org_id=portal_org_cuid,
-                )
-            # UPSERT one membership row per (org, OWUI user); idempotent on re-login.
-            OrganizationsService.upsert_member(
-                db,
-                org_id=org.id,
-                user_id=user.id,
-                # Normalize the Portal role (UPPERCASE OWNER/ADMIN/MEMBER) to the
-                # lowercase AgencyOS vocabulary require_org_admin checks against.
-                role=(payload.get("role") or "member").lower(),
-            )
-            # Cache the org's Portal app entitlement — this is what require_app_access
-            # reads on the OWUI-session path (the session token has no app_access claim).
-            OrganizationsService.set_org_app_access(
-                db, org.id, payload.get("app_access") or []
-            )
-            log.info(
-                "AgencyOS provisioning at exchange: user=%s org=%s apps=%s",
-                user.id,
-                org.id,
-                payload.get("app_access") or [],
-            )
-    except Exception as e:
-        log.warning(
-            f"AgencyOS provisioning at portal-exchange failed (non-fatal): {e}"
-        )
-        try:
-            db.rollback()
-        except Exception:
-            pass
+    OrganizationsService.provision_from_portal(db, user.id, payload)
 
     # Create OWUI session token and return response
     # This uses the standard create_session_response which creates a token with {"id": user.id}

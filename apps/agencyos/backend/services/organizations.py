@@ -176,6 +176,57 @@ class OrganizationsService:
         return member
 
     @staticmethod
+    def provision_from_portal(db: Session, user_id: str, payload: dict) -> None:
+        """Persist AgencyOS org membership + per-org app_access from a VALIDATED Portal
+        JWT payload, keyed on the OWUI user.id (#45 / agencyos#50). Idempotent — safe on
+        every login: find-or-create the org by its Portal CUID, upsert ONE membership row
+        (role normalized to the lowercase AgencyOS vocabulary), and overwrite the cached
+        app_access entitlement require_app_access reads on the OWUI-session path.
+
+        Called from BOTH auth entry points so provisioning runs on the path prod actually
+        uses: routers/auth_callback.py::portal_auth_callback (the deployed server-side SSO
+        callback) AND routers/auths.py::portal_token_exchange. Historically the block lived
+        only in portal_token_exchange, which prod never calls — so provisioning never ran.
+
+        Defensive by contract: ANY failure here MUST NOT break login. Log + rollback."""
+        try:
+            portal_org_cuid = payload.get("org_id")
+            if not portal_org_cuid:
+                return
+            org = OrganizationsService.get_org_by_portal_id(db, portal_org_cuid)
+            if org is None:
+                org_slug = payload.get("org_slug") or portal_org_cuid
+                org = OrganizationsService.create_org(
+                    db,
+                    name=payload.get("org_name") or org_slug,
+                    slug=org_slug,
+                    portal_org_id=portal_org_cuid,
+                )
+            OrganizationsService.upsert_member(
+                db,
+                org_id=org.id,
+                user_id=user_id,
+                role=(payload.get("role") or "member").lower(),
+            )
+            OrganizationsService.set_org_app_access(
+                db, org.id, payload.get("app_access") or []
+            )
+            log.info(
+                "AgencyOS provisioning from portal: user=%s org=%s apps=%s",
+                user_id,
+                org.id,
+                payload.get("app_access") or [],
+            )
+        except Exception as e:
+            log.warning(
+                f"AgencyOS provisioning from portal failed (non-fatal): {e}"
+            )
+            try:
+                db.rollback()
+            except Exception:
+                pass
+
+    @staticmethod
     def get_org_by_slug(db: Session, slug: str) -> Optional[AgencyOSOrganization]:
         return db.query(AgencyOSOrganization).filter_by(slug=slug).first()
 
