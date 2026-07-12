@@ -137,6 +137,14 @@ async def portal_auth_callback(
             if user.name != name:
                 Users.update_user_by_id(user.id, {"name": name}, db=db)
 
+        # Persist AgencyOS org membership + per-org app_access from the validated
+        # Portal JWT, keyed on the OWUI user.id (agencyos#50). This is the path prod
+        # actually uses; the identical call runs in routers/auths.py::portal_token_exchange.
+        # Defensive: the helper never raises (logs + rolls back), so login is never broken.
+        from ..services.organizations import OrganizationsService
+
+        OrganizationsService.provision_from_portal(db, user.id, payload)
+
         # Create OWUI session token
         expires_delta = parse_duration(request.app.state.config.JWT_EXPIRES_IN)
         expires_at = None
