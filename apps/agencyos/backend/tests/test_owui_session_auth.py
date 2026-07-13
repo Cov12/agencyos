@@ -8,8 +8,7 @@ REAL OWUI path — a token signed with WEBUI_SECRET_KEY, NOT a faked Portal-JWT 
 and pin:
 
   - a member of org A: 200 on A's routes, 403 on org B (real IDOR enforcement);
-  - a user with NO membership: allowed with AGENCYOS_DEV_ALLOW_HEADER_AUTH=1 (rollout
-    grace), 403 with it off;
+  - a user with NO membership: 403 (fail-closed, no dev grace);
   - require_app_access reads the org's cached app_access column (granted -> 200,
     missing -> 403) on the OWUI path;
   - the portal-exchange provisioning sequence persists AgencyOSMember + app_access.
@@ -194,23 +193,14 @@ def test_member_gets_200_on_own_org(client, url, params):
     ("/api/agencyos/cortex-approvals/", {"org_id": ORG_B}),
     ("/api/agencyos/employee-tabs/", {"org_id": ORG_B}),
 ])
-def test_member_gets_403_on_foreign_org(client, url, params, monkeypatch):
-    """The IDOR case: USER_MEMBER (member of A, not B) requesting ORG_B is 403 — even
-    with the escape hatch ON, because membership rows exist (flag never bypasses IDOR)."""
-    monkeypatch.setenv(FLAG, "1")
+def test_member_gets_403_on_foreign_org(client, url, params):
+    """The IDOR case: USER_MEMBER (member of A, not B) requesting ORG_B is 403 — membership
+    rows exist, so the requested org must be one the caller actually belongs to."""
     resp = client.get(url, params=params, headers=_auth(USER_MEMBER))
     assert resp.status_code == 403, f"{url} leaked cross-tenant: {resp.status_code} {resp.text}"
 
 
 # ── No-membership user: rollout grace vs fail-closed ──────────────────────────
-
-def test_no_membership_allowed_with_flag_on(client, monkeypatch):
-    """An un-provisioned OWUI user is allowed through with the flag ON (rollout grace)."""
-    monkeypatch.setenv(FLAG, "1")
-    resp = client.get("/api/agencyos/departments/", params={"org_id": ORG_A},
-                      headers=_auth(USER_NOMEM))
-    assert resp.status_code == 200, resp.text
-
 
 def test_no_membership_denied_with_flag_off(client, monkeypatch):
     """With the flag OFF, an un-provisioned OWUI user is fail-closed to 403."""
@@ -220,12 +210,11 @@ def test_no_membership_denied_with_flag_off(client, monkeypatch):
     assert resp.status_code == 403, resp.text
 
 
-def test_no_membership_app_access_grace_with_flag_on(client, monkeypatch):
-    """require_app_access also grants rollout grace to un-provisioned users (flag ON)."""
-    monkeypatch.setenv(FLAG, "1")
+def test_no_membership_app_access_denied(client):
+    """require_app_access fail-closes an un-provisioned OWUI user to 403 (no grace)."""
     resp = client.get("/api/agencyos/cortex-approvals/", params={"org_id": ORG_A},
                       headers=_auth(USER_NOMEM))
-    assert resp.status_code == 200, resp.text
+    assert resp.status_code == 403, resp.text
 
 
 # ── require_app_access reads the org's cached app_access on the OWUI path ──────
@@ -251,12 +240,6 @@ def test_unauthenticated_denied_without_flag(client, monkeypatch):
     monkeypatch.delenv(FLAG, raising=False)
     resp = client.get("/api/agencyos/departments/", params={"org_id": ORG_A})
     assert resp.status_code == 403, resp.text
-
-
-def test_unauthenticated_allowed_with_flag(client, monkeypatch):
-    monkeypatch.setenv(FLAG, "1")
-    resp = client.get("/api/agencyos/departments/", params={"org_id": ORG_A})
-    assert resp.status_code == 200, resp.text
 
 
 # ── portal-exchange provisioning: persists AgencyOSMember + app_access ─────────

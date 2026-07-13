@@ -58,26 +58,16 @@ class TestRequireAppAccess:
             dep(_make_request(None))
         assert exc.value.status_code == 403
 
-    def test_allows_when_portal_auth_none_with_dev_env_var(self, monkeypatch):
-        """No portal_auth + AGENCYOS_DEV_ALLOW_HEADER_AUTH=1 = allow through."""
-        monkeypatch.setenv("AGENCYOS_DEV_ALLOW_HEADER_AUTH", "1")
-        dep = require_app_access("CORTEX")
-
-        # Should not raise.
-        assert dep(_make_request(None)) is None
-
-    def test_dev_env_var_must_be_exactly_1(self, monkeypatch):
-        """Truthy strings other than literal "1" do NOT trip the escape hatch."""
-        monkeypatch.setenv("AGENCYOS_DEV_ALLOW_HEADER_AUTH", "true")
+    def test_denies_when_portal_auth_none_and_no_owui_user(self):
+        """No portal_auth and no resolvable OWUI session = 403 (fail-closed, no grace)."""
         dep = require_app_access("CORTEX")
 
         with pytest.raises(HTTPException) as exc:
             dep(_make_request(None))
         assert exc.value.status_code == 403
 
-    def test_dev_env_var_does_not_bypass_explicit_missing_app(self, monkeypatch):
-        """If portal_auth is present but lacks the app, env var does NOT bypass."""
-        monkeypatch.setenv("AGENCYOS_DEV_ALLOW_HEADER_AUTH", "1")
+    def test_portal_auth_present_but_missing_app_is_denied(self):
+        """If portal_auth is present but lacks the required app, access is denied."""
         dep = require_app_access("CORTEX")
         ctx = PortalAuthContext(
             user_id="u-1",
