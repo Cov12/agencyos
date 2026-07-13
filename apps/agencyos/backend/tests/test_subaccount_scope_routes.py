@@ -50,6 +50,7 @@ def db_session():
                 name="Acme",
                 slug="acme",
                 plan="starter",
+                portal_org_id="portal-org-1",
             )
         )
         session.add(
@@ -102,19 +103,24 @@ def db_session():
 
 
 @pytest.fixture
-def app(db_session, monkeypatch):
-    # #41: these routes now carry require_org_access. This suite drives the legacy
-    # single-tenant/dev path — no JWTAuthMiddleware, so request.state.portal_auth is
-    # never set. Opt into the SAME non-prod dev escape hatch require_app_access uses
-    # (AGENCYOS_DEV_ALLOW_HEADER_AUTH=1) so the org-binding dep passes through the
-    # header path exactly as before instead of fail-closing to 403.
-    monkeypatch.setenv("AGENCYOS_DEV_ALLOW_HEADER_AUTH", "1")
+def app(db_session):
+    # #41: these routes carry require_org_access. This suite drives the legacy Portal-JWT
+    # identity path by injecting a portal_auth context whose org_id matches the seeded
+    # org's portal_org_id, so the org-binding dep authorizes the caller (owner, all apps)
+    # via real enforcement instead of a dev flag.
+    from apps.agencyos.backend.middleware.jwt_auth import PortalAuthContext
 
     app = FastAPI()
 
     @app.middleware("http")
     async def _inject_state(request: Request, call_next):
         request.state.user_id = "user-1"
+        request.state.portal_auth = PortalAuthContext(
+            user_id="user-1",
+            org_id="portal-org-1",
+            role="owner",
+            app_access=["AGENCYOS", "CORTEX", "DRIVE", "WORKPIPE"],
+        )
         return await call_next(request)
 
     orchestrator = _StubOrchestrator()

@@ -12,7 +12,7 @@ from open_webui.internal.db import Base
 from apps.agencyos.backend.middleware import jwt_auth
 from apps.agencyos.backend.middleware.jwt_auth import JWTAuthMiddleware
 from apps.agencyos.backend.middleware.tenant import get_tenant_session
-from apps.agencyos.backend.models.db import AgencyOSOrganization
+from apps.agencyos.backend.models.db import AgencyOSMember, AgencyOSOrganization, now_ms
 from apps.agencyos.backend.routers import dashboard_workpipe
 from apps.agencyos.backend.services import workpipe_dashboard
 
@@ -200,14 +200,22 @@ def test_pipelines_route_requires_workpipe_app_access(client, monkeypatch):
 
 
 def test_stats_route_returns_409_when_org_is_not_linked_to_workpipe(client, db_session, monkeypatch):
-    db_session.query(AgencyOSOrganization).filter_by(id=TEST_ORG_ID).update({"portal_org_id": None})
+    # Org is not linked to WorkPipe (portal_org_id NULL) yet grants WORKPIPE app access.
+    # Authorize the caller via a real AgencyOSMember row so require_org_access passes on
+    # the OWUI-session path (which binds on membership, not portal_org_id) — the 409
+    # "not linked" semantics are unchanged; only the auth path used to reach the handler.
+    monkeypatch.setenv("WEBUI_SECRET_KEY", "test-owui-secret")
+    db_session.query(AgencyOSOrganization).filter_by(id=TEST_ORG_ID).update(
+        {"portal_org_id": None, "app_access": ["AGENCYOS", "WORKPIPE"]}
+    )
+    db_session.add(
+        AgencyOSMember(
+            id="m-wp-owui", org_id=TEST_ORG_ID, user_id="u-wp-owui",
+            role="owner", created_at=now_ms(),
+        )
+    )
     db_session.commit()
-
-    # #41: with portal_org_id NULL no Portal caller can bind to this org (require_org_access
-    # would 403 before the handler). The "not linked to WorkPipe" 409 is reachable only on
-    # the non-prod dev/header path, so drive it there — the org-unlinked 409 semantics are
-    # unchanged, only the auth path used to reach the handler.
-    monkeypatch.setenv("AGENCYOS_DEV_ALLOW_HEADER_AUTH", "1")
+    owui_token = pyjwt.encode({"id": "u-wp-owui"}, "test-owui-secret", algorithm="HS256")
 
     fake = _FakeClient(_FakeResponse(200, {"contacts": {}, "tickets": {}, "pipelines": {}}))
     _patch_httpx(monkeypatch, fake)
@@ -215,7 +223,7 @@ def test_stats_route_returns_409_when_org_is_not_linked_to_workpipe(client, db_s
     response = client.get(
         "/api/agencyos/dashboard/workpipe/stats",
         params={"org_id": TEST_ORG_ID},
-        headers={"X-Org-Id": TEST_ORG_ID},
+        headers={"Authorization": f"Bearer {owui_token}"},
     )
 
     assert response.status_code == 409, response.text

@@ -8,7 +8,6 @@ correctly through the full dependency chain + HTTP layer.
 Coverage:
   - Default deny: no Portal JWT, no env var → 403 on both CORTEX-gated
     routers (cortex-approvals, employee-tabs).
-  - Dev escape hatch: AGENCYOS_DEV_ALLOW_HEADER_AUTH=1 opens the gate and
     emits the documented WARNING log line. Env var must be exactly "1".
   - Portal JWT path: HS256 tokens minted with the test secret are decoded
     by JWTAuthMiddleware; the CORTEX entitlement is gated purely on the
@@ -132,7 +131,6 @@ class TestDefaultDeny:
     def test_cortex_approvals_returns_403_when_no_portal_auth_and_no_env_var(
         self, client, monkeypatch
     ):
-        monkeypatch.delenv("AGENCYOS_DEV_ALLOW_HEADER_AUTH", raising=False)
         r = client.get(
             "/api/agencyos/cortex-approvals/",
             headers={"X-Org-Id": "any-org"},
@@ -145,7 +143,6 @@ class TestDefaultDeny:
     def test_employee_tabs_returns_403_when_no_portal_auth_and_no_env_var(
         self, client, monkeypatch
     ):
-        monkeypatch.delenv("AGENCYOS_DEV_ALLOW_HEADER_AUTH", raising=False)
         r = client.get(
             "/api/agencyos/employee-tabs/",
             headers={"X-Org-Id": "any-org"},
@@ -156,77 +153,6 @@ class TestDefaultDeny:
         assert "CORTEX" in r.text
 
 
-# ─────────────────────────────────────────────────────────────────────────
-# Tier 3 — dev fallback env var
-# ─────────────────────────────────────────────────────────────────────────
-class TestDevFallback:
-    def test_cortex_approvals_does_NOT_return_403_when_env_var_set(
-        self, client, monkeypatch
-    ):
-        monkeypatch.setenv("AGENCYOS_DEV_ALLOW_HEADER_AUTH", "1")
-        r = client.get(
-            "/api/agencyos/cortex-approvals/",
-            headers={"X-Org-Id": "real-org"},
-            params={"org_id": "real-org"},
-        )
-        # With dev fallback ON, require_app_access lets the request through.
-        # The next dependency (get_tenant_session) needs a real DB which we
-        # don't have in tests — that yields a non-403 error (DB or service-
-        # level), proving the gate has been opened.
-        assert r.status_code != 403, (
-            f"expected non-403 (gate opened), got 403: {r.text}"
-        )
-
-    def test_employee_tabs_does_NOT_return_403_when_env_var_set(
-        self, client, monkeypatch
-    ):
-        monkeypatch.setenv("AGENCYOS_DEV_ALLOW_HEADER_AUTH", "1")
-        r = client.get(
-            "/api/agencyos/employee-tabs/",
-            headers={"X-Org-Id": "real-org"},
-            params={"org_id": "real-org"},
-        )
-        assert r.status_code != 403, (
-            f"expected non-403 (gate opened), got 403: {r.text}"
-        )
-
-    def test_dev_fallback_emits_warning_log(self, client, monkeypatch, caplog):
-        monkeypatch.setenv("AGENCYOS_DEV_ALLOW_HEADER_AUTH", "1")
-        caplog.set_level(logging.WARNING, logger="apps.agencyos.backend.middleware.deps")
-        # Hit either router; the dep is identical
-        client.get(
-            "/api/agencyos/cortex-approvals/",
-            headers={"X-Org-Id": "real-org"},
-            params={"org_id": "real-org"},
-        )
-        warning_lines = [
-            r.getMessage()
-            for r in caplog.records
-            if r.levelname == "WARNING"
-        ]
-        # Spec: "WARNING ... require_app_access[CORTEX]: portal_auth missing;
-        # allowing via AGENCYOS_DEV_ALLOW_HEADER_AUTH dev escape hatch"
-        match = [m for m in warning_lines if "require_app_access" in m and "CORTEX" in m and "AGENCYOS_DEV_ALLOW_HEADER_AUTH" in m]
-        assert match, (
-            f"expected WARNING line containing 'require_app_access', 'CORTEX', "
-            f"and 'AGENCYOS_DEV_ALLOW_HEADER_AUTH'; got: {warning_lines}"
-        )
-        print("captured WARNING line:", match[0])
-
-    def test_dev_env_var_other_values_do_NOT_open_the_gate(
-        self, client, monkeypatch
-    ):
-        for val in ["true", "TRUE", "0", "yes", ""]:
-            monkeypatch.setenv("AGENCYOS_DEV_ALLOW_HEADER_AUTH", val)
-            r = client.get(
-                "/api/agencyos/cortex-approvals/",
-                headers={"X-Org-Id": "any-org"},
-                params={"org_id": "any-org"},
-            )
-            assert r.status_code == 403, (
-                f"env var '{val}' should NOT open the gate; got {r.status_code}"
-            )
-
 
 # ─────────────────────────────────────────────────────────────────────────
 # Tier 4 — Portal JWT path (MOST VALUABLE TEST)
@@ -235,7 +161,6 @@ class TestPortalJwt:
     def test_4_3_token_without_CORTEX_in_app_access_returns_403(
         self, jwt_client, monkeypatch
     ):
-        monkeypatch.delenv("AGENCYOS_DEV_ALLOW_HEADER_AUTH", raising=False)
         token = _mint_token(["WORKPIPE", "AGENCYOS", "DRIVE"])
         r = jwt_client.get(
             "/api/agencyos/cortex-approvals/",
@@ -248,7 +173,6 @@ class TestPortalJwt:
     def test_4_5a_token_with_CORTEX_lets_cortex_approvals_pass_gate(
         self, jwt_client, monkeypatch
     ):
-        monkeypatch.delenv("AGENCYOS_DEV_ALLOW_HEADER_AUTH", raising=False)
         token = _mint_token(["AGENCYOS", "CORTEX", "DRIVE", "WORKPIPE"])
         r = jwt_client.get(
             "/api/agencyos/cortex-approvals/",
@@ -260,7 +184,6 @@ class TestPortalJwt:
     def test_4_5b_token_with_CORTEX_lets_employee_tabs_pass_gate(
         self, jwt_client, monkeypatch
     ):
-        monkeypatch.delenv("AGENCYOS_DEV_ALLOW_HEADER_AUTH", raising=False)
         token = _mint_token(["AGENCYOS", "CORTEX", "DRIVE", "WORKPIPE"])
         r = jwt_client.get(
             "/api/agencyos/employee-tabs/",
@@ -271,7 +194,6 @@ class TestPortalJwt:
 
     def test_expired_token_returns_403(self, jwt_client, monkeypatch):
         """JWT expired → middleware drops portal_auth → require_app_access denies."""
-        monkeypatch.delenv("AGENCYOS_DEV_ALLOW_HEADER_AUTH", raising=False)
         token = _mint_token(["CORTEX"], expired=True)
         r = jwt_client.get(
             "/api/agencyos/cortex-approvals/",
@@ -284,7 +206,6 @@ class TestPortalJwt:
 
     def test_bad_signature_returns_403(self, jwt_client, monkeypatch):
         """Signed with wrong secret → middleware rejects → 403."""
-        monkeypatch.delenv("AGENCYOS_DEV_ALLOW_HEADER_AUTH", raising=False)
         token = _mint_token(["CORTEX"], secret="not-the-real-secret")
         r = jwt_client.get(
             "/api/agencyos/cortex-approvals/",
@@ -294,7 +215,6 @@ class TestPortalJwt:
         assert r.status_code == 403
 
     def test_malformed_token_returns_403(self, jwt_client, monkeypatch):
-        monkeypatch.delenv("AGENCYOS_DEV_ALLOW_HEADER_AUTH", raising=False)
         r = jwt_client.get(
             "/api/agencyos/cortex-approvals/",
             headers={"Authorization": "Bearer not-even-a-jwt"},
@@ -305,7 +225,6 @@ class TestPortalJwt:
     def test_token_with_empty_app_access_returns_403(
         self, jwt_client, monkeypatch
     ):
-        monkeypatch.delenv("AGENCYOS_DEV_ALLOW_HEADER_AUTH", raising=False)
         token = _mint_token([])
         r = jwt_client.get(
             "/api/agencyos/cortex-approvals/",
@@ -314,11 +233,10 @@ class TestPortalJwt:
         )
         assert r.status_code == 403
 
-    def test_jwt_path_does_not_consult_env_var(self, jwt_client, monkeypatch):
-        """Dev escape hatch must NOT bypass an explicit denial when JWT is present
-        but lacks CORTEX. This is the security-critical invariant.
+    def test_jwt_present_but_lacking_cortex_is_denied(self, jwt_client):
+        """A JWT present but lacking CORTEX is an explicit, unconditional 403 —
+        the security-critical app-entitlement invariant.
         """
-        monkeypatch.setenv("AGENCYOS_DEV_ALLOW_HEADER_AUTH", "1")
         token = _mint_token(["WORKPIPE", "AGENCYOS", "DRIVE"])  # no CORTEX
         r = jwt_client.get(
             "/api/agencyos/cortex-approvals/",
@@ -341,7 +259,6 @@ class TestNonCortexRouteRegression:
         """Token has NO CORTEX in app_access; proposals/ is untouched by PR #6
         and must still respond non-403. Confirms the gate is router-scoped.
         """
-        monkeypatch.delenv("AGENCYOS_DEV_ALLOW_HEADER_AUTH", raising=False)
         token = _mint_token(["WORKPIPE", "AGENCYOS", "DRIVE"])  # no CORTEX
         r = jwt_client.get(
             "/api/agencyos/proposals/",
@@ -359,7 +276,6 @@ class TestNonCortexRouteRegression:
         self, jwt_client, monkeypatch
     ):
         """Even without any Authorization header, proposals/ is not CORTEX-gated."""
-        monkeypatch.delenv("AGENCYOS_DEV_ALLOW_HEADER_AUTH", raising=False)
         r = jwt_client.get(
             "/api/agencyos/proposals/",
             headers={"X-Org-Id": "test-org"},

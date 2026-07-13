@@ -42,8 +42,8 @@ def _resolve_owui_user_id(request: Request):
     Mirrors open_webui.utils.auth.get_current_user token extraction (bearer header,
     else the `token` cookie) but WITHOUT a hard dependency: get_verified_user/
     get_current_user raise 401 on a missing/invalid token, which would pre-empt the
-    escape-hatch / rollout-grace behavior below (we need to fall through to the flag,
-    not 401). So we decode softly and return None when no valid OWUI token is present.
+    fail-closed 403 below (we need to fall through to it, not raise 401 here). So we
+    decode softly and return None when no valid OWUI token is present.
 
     Returns the OWUI user.id (str) or None.
     """
@@ -69,10 +69,6 @@ def _resolve_owui_user_id(request: Request):
     return None
 
 
-def _escape_hatch_enabled() -> bool:
-    return os.environ.get("AGENCYOS_DEV_ALLOW_HEADER_AUTH") == "1"
-
-
 def require_app_access(required_app: str):
     """
     FastAPI dep factory. 403s unless the caller is entitled to `required_app`.
@@ -87,10 +83,9 @@ def require_app_access(required_app: str):
        token carries no app_access claim, so entitlement is read from the DB —
        the requested org's cached AgencyOSOrganization.app_access column (written
        at portal-exchange). A user with >=1 membership row is enforced against it;
-       a user with NO membership rows falls to the rollout-grace escape hatch.
+       a user with NO membership rows is denied (fail-closed).
 
-    3. Neither identity resolves: 403 unless the AGENCYOS_DEV_ALLOW_HEADER_AUTH=1
-       escape hatch is set (dev/test / rollout grace — NEVER a prod default).
+    3. Neither identity resolves: 403 (fail-closed).
     """
 
     def _dep(request: Request, db: Session = Depends(get_tenant_session)):
@@ -110,15 +105,8 @@ def require_app_access(required_app: str):
 
         owui_user_id = _resolve_owui_user_id(request)
 
-        # 3. No identity at all.
+        # 3. No identity at all — fail closed.
         if not owui_user_id:
-            if _escape_hatch_enabled():
-                logger.warning(
-                    "require_app_access[%s]: no portal_auth and no OWUI user; allowing "
-                    "via AGENCYOS_DEV_ALLOW_HEADER_AUTH escape hatch",
-                    required_app,
-                )
-                return
             logger.info(
                 "require_app_access[%s] denied: unauthenticated (no portal_auth, no OWUI user)",
                 required_app,
@@ -130,14 +118,7 @@ def require_app_access(required_app: str):
         # 2. OWUI-session path.
         members = OrganizationsService.get_user_orgs(db, owui_user_id)
         if not members:
-            # Un-provisioned user — rollout grace (or fail-closed with the flag off).
-            if _escape_hatch_enabled():
-                logger.warning(
-                    "require_app_access[%s]: OWUI user=%s has no membership; allowing via "
-                    "AGENCYOS_DEV_ALLOW_HEADER_AUTH rollout grace",
-                    required_app, owui_user_id,
-                )
-                return
+            # Un-provisioned user — fail closed.
             logger.info(
                 "require_app_access[%s] denied: OWUI user=%s has no membership",
                 required_app, owui_user_id,
@@ -181,11 +162,11 @@ def require_app_access(required_app: str):
 # (test_owui_session_auth.py:103), so the OWUI DB path must honour "owner" too. Anything
 # below (department_head/manager/member) is a NON-admin and cannot add members.
 #
-# NOTE (role-model bootstrapping, #45 PR-3): create_org does NOT seat its creator as a
-# member (services/organizations.py:26-52) and no prod code writes an executive/owner
-# AgencyOSMember yet, so on the pure OWUI path this gate is fail-closed until the first
-# admin is provisioned — the AGENCYOS_DEV_ALLOW_HEADER_AUTH rollout grace covers that
-# window exactly as #46 intends. Seeding the org creator as an admin is a UX follow-up.
+# NOTE (role-model bootstrapping, #45): the org's owner/admin AgencyOSMember row is now
+# written at login by OrganizationsService.provision_from_portal, invoked from the real
+# SSO callback routers/auth_callback.py::portal_auth_callback (agencyos#50/#51), with the
+# role taken from the Portal JWT. So a genuine OWNER/ADMIN is seated on first entry and
+# this gate is enforced for everyone — there is no dev-flag grace anymore.
 ORG_ADMIN_ROLES = frozenset({"executive", "owner", "admin"})
 
 
@@ -205,23 +186,18 @@ def require_org_admin(
 
     Layered ON TOP of require_org_access (both are composed on the route): require_org_access
     already binds the requested internal org_id to the caller's real identity (the #41/#45
-    IDOR fix) and applies the rollout grace; this dep ADDITIONALLY requires the caller's
-    ROLE for THIS org be in ORG_ADMIN_ROLES. It gates privileged mutations — currently
-    POST /orgs/{org_id}/members, which otherwise let ANY member (or, under the dev-flag
-    grace, any authed user) mint arbitrary user_ids with arbitrary roles into the tenant
-    (privilege escalation / tenant pollution).
+    IDOR fix); this dep ADDITIONALLY requires the caller's ROLE for THIS org be in
+    ORG_ADMIN_ROLES. It gates privileged mutations — currently POST /orgs/{org_id}/members,
+    which otherwise let ANY member mint arbitrary user_ids with arbitrary roles into the
+    tenant (privilege escalation / tenant pollution).
 
     This authorizes the CALLER only; the body user_id (who is being ADDED) is handled in
     the route handler and is deliberately NOT the identity checked here.
 
     Identity resolution reuses the #46 helpers (portal_auth / _resolve_owui_user_id /
-    get_user_orgs) and mirrors require_org_access's three paths. The escape-hatch / grace
-    behavior is kept IDENTICAL to require_org_access (#46): an un-provisioned caller (no
-    membership) or no identity at all is allowed ONLY with AGENCYOS_DEV_ALLOW_HEADER_AUTH=1,
-    else 403 — we never 403 the grace path differently than #46 does, so the rollout grace
-    still lets prod work. A PROVISIONED member is past the grace window, so a non-admin
-    member is 403 even with the flag on (that is the privilege-escalation fix, not the
-    grace path).
+    get_user_orgs) and mirrors require_org_access's three paths, all fail-closed: an
+    un-provisioned caller (no membership) or no identity at all is 403. A provisioned
+    member whose role is not admin-ish is also 403 (the privilege-escalation fix).
     """
     portal_auth = getattr(request.state, "portal_auth", None)
     # Same org-id resolution require_org_access uses: query param first, else path param.
@@ -232,7 +208,7 @@ def require_org_admin(
 
     # 1. LEGACY Portal-JWT path: the JWT carries the caller's role — require it be
     #    admin-ish. (require_org_access, alongside, already bound the org to the caller's
-    #    Portal CUID, so here we only add the role gate.)
+    #    Portal CUID, so here we only add the role gate.) Fail-closed on every path.
     if portal_auth is not None:
         if not _role_is_admin(getattr(portal_auth, "role", None)):
             logger.info(
@@ -245,15 +221,8 @@ def require_org_admin(
 
     owui_user_id = _resolve_owui_user_id(request)
 
-    # 3. No identity at all — mirror require_org_access's grace exactly.
+    # 3. No identity at all — fail closed.
     if not owui_user_id:
-        if _escape_hatch_enabled():
-            logger.warning(
-                "require_org_admin: no portal_auth and no OWUI user; allowing via "
-                "AGENCYOS_DEV_ALLOW_HEADER_AUTH escape hatch (org_id=%s)",
-                requested_org_id,
-            )
-            return
         logger.info(
             "require_org_admin denied: unauthenticated (no portal_auth, no OWUI user)"
         )
@@ -264,15 +233,7 @@ def require_org_admin(
     #    is distinct from the body user_id (the user being added) — see the route handler.
     members = OrganizationsService.get_user_orgs(db, owui_user_id)
     if not members:
-        # Un-provisioned caller — rollout grace (or fail-closed with the flag off),
-        # identical to require_org_access (#46).
-        if _escape_hatch_enabled():
-            logger.warning(
-                "require_org_admin: OWUI user=%s has no membership; allowing via "
-                "AGENCYOS_DEV_ALLOW_HEADER_AUTH rollout grace (org_id=%s)",
-                owui_user_id, requested_org_id,
-            )
-            return
+        # Un-provisioned caller — fail closed.
         logger.info(
             "require_org_admin denied: OWUI user=%s has no membership", owui_user_id
         )
@@ -319,10 +280,9 @@ def require_org_access(
        AgencyOSMember org_ids.
          - If the user HAS >=1 membership row: the requested internal org_id MUST be one
            of them, else 403. (This is the real IDOR enforcement on the prod OWUI path.)
-         - If the user has NO membership rows: rollout grace — allow iff
-           AGENCYOS_DEV_ALLOW_HEADER_AUTH=1 (log a warning), else 403.
+         - If the user has NO membership rows: 403 (fail-closed).
 
-    3. Neither identity resolves: 403 unless the escape hatch is set.
+    3. Neither identity resolves: 403 (fail-closed).
     """
     portal_auth = getattr(request.state, "portal_auth", None)
     # Match how handlers receive the internal org id: query param first (departments,
@@ -356,15 +316,8 @@ def require_org_access(
 
     owui_user_id = _resolve_owui_user_id(request)
 
-    # 3. No identity at all.
+    # 3. No identity at all — fail closed.
     if not owui_user_id:
-        if _escape_hatch_enabled():
-            logger.warning(
-                "require_org_access: no portal_auth and no OWUI user; allowing via "
-                "AGENCYOS_DEV_ALLOW_HEADER_AUTH escape hatch (org_id=%s)",
-                requested_org_id,
-            )
-            return
         logger.info(
             "require_org_access denied: unauthenticated (no portal_auth, no OWUI user)"
         )
@@ -384,14 +337,7 @@ def require_org_access(
         )
         raise HTTPException(status_code=403, detail="Org access denied")
 
-    # No membership rows — rollout grace (or fail-closed with the flag off).
-    if _escape_hatch_enabled():
-        logger.warning(
-            "require_org_access: OWUI user=%s has no membership; allowing via "
-            "AGENCYOS_DEV_ALLOW_HEADER_AUTH rollout grace (org_id=%s)",
-            owui_user_id, requested_org_id,
-        )
-        return
+    # No membership rows — fail closed.
     logger.info(
         "require_org_access denied: OWUI user=%s has no membership", owui_user_id
     )

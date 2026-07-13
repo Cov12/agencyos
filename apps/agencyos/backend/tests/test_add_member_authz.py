@@ -158,7 +158,6 @@ def test_owui_admin_can_add_member_to_own_org(client, db_session):
 def test_owui_nonadmin_member_cannot_add_member(client, db_session, monkeypatch):
     """A non-admin MEMBER of ORG_A is 403 — even with the escape hatch ON (a provisioned
     member is past the grace window; the admin-role requirement still applies)."""
-    monkeypatch.setenv(FLAG, "1")
     resp = _post_add_member(client, ORG_A, _owui_auth(USER_MEMBER_A))
     assert resp.status_code == 403, resp.text
     assert OrganizationsService.get_member(db_session, ORG_A, ADDED_USER) is None
@@ -182,16 +181,8 @@ def test_owui_admin_cannot_add_to_foreign_org(client, db_session):
 
 # ── Rollout-grace consistency with #46 (un-provisioned caller only) ────────────
 
-def test_owui_unprovisioned_caller_allowed_with_flag_on(client, monkeypatch):
-    """An un-provisioned OWUI caller (no membership) is allowed through with the flag ON —
-    the grace path is NOT 403'd differently than #46 does."""
-    monkeypatch.setenv(FLAG, "1")
-    resp = _post_add_member(client, ORG_A, _owui_auth(USER_NOMEM))
-    assert resp.status_code == 200, resp.text
-
-
-def test_owui_unprovisioned_caller_denied_with_flag_off(client):
-    """With the flag OFF, an un-provisioned OWUI caller is fail-closed to 403."""
+def test_owui_unprovisioned_caller_denied(client):
+    """An un-provisioned OWUI caller (no membership) is 403 — fail-closed, no grace."""
     resp = _post_add_member(client, ORG_A, _owui_auth(USER_NOMEM))
     assert resp.status_code == 403, resp.text
 
