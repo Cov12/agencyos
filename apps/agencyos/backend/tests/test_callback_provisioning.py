@@ -3,14 +3,14 @@
 The deployed AgencyOS login is the server-side route
 `apps/agencyos/backend/routers/auth_callback.py::portal_auth_callback`
 (GET /agencyos/auth/callback). Historically the Portal->AgencyOS provisioning
-(AgencyOSMember + per-org app_access, #45) lived ONLY in
-`routers/auths.py::portal_token_exchange` — an endpoint prod never calls (it is hit by
-an unused Svelte page). So provisioning never ran in prod: users were created but no
+(AgencyOSMember + per-org app_access, #45) lived ONLY in a `portal_token_exchange`
+endpoint prod never called (it was hit by an unused Svelte page, since removed). So
+provisioning never ran in prod: users were created but no
 membership / app_access rows, and every OWUI-session auth gate fell through to the
 AGENCYOS_DEV_ALLOW_HEADER_AUTH rollout grace.
 
 These tests pin the fix: a shared `OrganizationsService.provision_from_portal` helper,
-exercised directly AND invoked from the REAL callback path (not `portal-exchange`).
+exercised directly AND invoked from the REAL callback path (portal_auth_callback).
 """
 
 import asyncio

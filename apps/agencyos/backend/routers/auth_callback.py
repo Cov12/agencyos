@@ -138,8 +138,8 @@ async def portal_auth_callback(
                 Users.update_user_by_id(user.id, {"name": name}, db=db)
 
         # Persist AgencyOS org membership + per-org app_access from the validated
-        # Portal JWT, keyed on the OWUI user.id (agencyos#50). This is the path prod
-        # actually uses; the identical call runs in routers/auths.py::portal_token_exchange.
+        # Portal JWT, keyed on the OWUI user.id (agencyos#50). portal_auth_callback is the
+        # single AgencyOS login path, so this is the sole provisioning entry point.
         # Defensive: the helper never raises (logs + rolls back), so login is never broken.
         from ..services.organizations import OrganizationsService
 
