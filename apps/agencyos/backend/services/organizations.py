@@ -183,10 +183,10 @@ class OrganizationsService:
         (role normalized to the lowercase AgencyOS vocabulary), and overwrite the cached
         app_access entitlement require_app_access reads on the OWUI-session path.
 
-        Called from BOTH auth entry points so provisioning runs on the path prod actually
-        uses: routers/auth_callback.py::portal_auth_callback (the deployed server-side SSO
-        callback) AND routers/auths.py::portal_token_exchange. Historically the block lived
-        only in portal_token_exchange, which prod never calls — so provisioning never ran.
+        Called from routers/auth_callback.py::portal_auth_callback — the deployed
+        server-side SSO callback and the single AgencyOS login path. (A duplicate
+        portal_token_exchange endpoint, hit only by an unused Svelte page, used to call
+        this too; it never ran in prod and has been removed — agencyos#50.)
 
         Defensive by contract: ANY failure here MUST NOT break login. Log + rollback."""
         try:

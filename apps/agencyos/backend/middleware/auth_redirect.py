@@ -114,10 +114,10 @@ class AuthRedirectMiddleware(BaseHTTPMiddleware):
         """
         Validate JWT using either OWUI secret or Portal secret.
 
-        After the portal-exchange flow, tokens are OWUI tokens (signed with WEBUI_SECRET_KEY).
+        After the SSO callback, tokens are OWUI tokens (signed with WEBUI_SECRET_KEY).
         Portal tokens (signed with JWT_SECRET) are also accepted for backwards compatibility.
         """
-        # Try OWUI secret first (this is what the portal-exchange endpoint creates)
+        # Try OWUI secret first (this is what portal_auth_callback mints)
         owui_secret = os.environ.get("WEBUI_SECRET_KEY", "")
         if owui_secret:
             try:

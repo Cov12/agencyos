@@ -3,7 +3,7 @@
 Prod requests to AgencyOS do NOT carry a Portal JWT; they carry an OpenWebUI SESSION
 token (payload {"id": user.id}, signed WEBUI_SECRET_KEY). So request.state.portal_auth
 is None and the auth gates must rebuild the caller's identity from that OWUI user.id +
-the AgencyOSMember rows persisted at portal-exchange. These tests authenticate via that
+the AgencyOSMember rows persisted at login (portal_auth_callback). These tests authenticate via that
 REAL OWUI path — a token signed with WEBUI_SECRET_KEY, NOT a faked Portal-JWT bearer —
 and pin:
 
@@ -11,7 +11,7 @@ and pin:
   - a user with NO membership: 403 (fail-closed, no dev grace);
   - require_app_access reads the org's cached app_access column (granted -> 200,
     missing -> 403) on the OWUI path;
-  - the portal-exchange provisioning sequence persists AgencyOSMember + app_access.
+  - the login provisioning sequence persists AgencyOSMember + app_access.
 
 Legacy Portal-JWT coverage lives in test_cross_tenant_isolation.py (unchanged).
 
@@ -159,7 +159,7 @@ def client(app):
 
 def _owui_token(user_id):
     """A REAL OWUI session token: payload {"id": user.id, "jti": ...}, signed
-    WEBUI_SECRET_KEY — exactly what create_token / portal-exchange mints in prod."""
+    WEBUI_SECRET_KEY — exactly what create_token / portal_auth_callback mints in prod."""
     payload = {"id": user_id, "jti": f"jti-{user_id}", "iat": int(time.time())}
     return pyjwt.encode(payload, TEST_WEBUI_SECRET, algorithm="HS256")
 
@@ -242,11 +242,11 @@ def test_unauthenticated_denied_without_flag(client, monkeypatch):
     assert resp.status_code == 403, resp.text
 
 
-# ── portal-exchange provisioning: persists AgencyOSMember + app_access ─────────
+# ── login provisioning: persists AgencyOSMember + app_access ───────────────────
 #
-# The full /portal-exchange endpoint imports the whole OWUI backend (unavailable in the
-# requirements-min unit env), so we exercise the exact service sequence the exchange
-# runs (routers/auths.py portal_token_exchange) and assert the persisted rows.
+# portal_auth_callback imports the whole OWUI backend (unavailable in the requirements-min
+# unit env), so we exercise the exact service sequence provisioning runs
+# (OrganizationsService.provision_from_portal) and assert the persisted rows.
 
 def test_exchange_provisioning_persists_member_and_app_access(db_session):
     portal_cuid = "cuidneworgxxxxxxxxxxxxxxx"
