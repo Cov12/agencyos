@@ -1,13 +1,18 @@
 """
 AgencyOS Tenant Middleware & Dependencies
 
-Two-layer tenant isolation:
-1. TenantMiddleware — extracts org_id from JWT/header, sets request.state.org_id
-2. get_tenant_session() — FastAPI dependency that creates a DB session with RLS context
+Tenant isolation layers:
+1. PRIMARY (always on): the application layer — require_org_access (middleware/deps.py)
+   binds the requested org_id to the caller's real membership, and every tenant-scoped
+   query filters by that org_id. This is what actually enforces isolation in prod.
+2. SECONDARY (Postgres only): Postgres RLS policies (migrations/001_rls_policies.sql)
+   keyed on the app.current_org_id session variable that get_tenant_session sets.
+   AgencyOS prod runs on SQLite, which has no RLS, so this layer is dormant there —
+   get_tenant_session sets the variable only when the bound engine is Postgres.
 
-The RLS variable (app.current_org_id) must be set on the SAME session
-used by the route handler. SET LOCAL scopes to the current transaction,
-so we wrap it in a dependency that yields a properly-configured session.
+TenantMiddleware extracts org_id from the JWT/header onto request.state.org_id;
+get_tenant_session yields the DB session, setting the RLS context on Postgres. SET LOCAL
+scopes to the current transaction, matching the route handler's lifecycle.
 """
 
 import logging
@@ -112,7 +117,15 @@ def get_tenant_session(
 
                 maybe_sync(db, internal_org_id, portal_cuid, portal_token)
 
-    if org_id:
+    # RLS is a Postgres-only SECOND layer (migrations/001_rls_policies.sql). AgencyOS prod
+    # runs on SQLite, which has no RLS — `SET LOCAL` there raises a syntax error on EVERY
+    # tenant request (previously caught + logged, i.e. per-request warning spam plus a
+    # false impression of DB-level isolation). The PRIMARY, always-on guard is the
+    # application layer: require_org_access (middleware/deps.py) binds the requested org_id
+    # to the caller's membership and every tenant-scoped query filters by that org_id. So
+    # only set the RLS context when the bound engine is Postgres, where a policy can
+    # actually consult it; on SQLite this is a clean no-op.
+    if org_id and db.get_bind().dialect.name == "postgresql":
         try:
             db.execute(
                 text("SET LOCAL app.current_org_id = :org_id"),

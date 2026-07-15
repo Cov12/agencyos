@@ -162,7 +162,7 @@ class _FakeRequest:
 def _drive(request, db):
     """Run the get_tenant_session generator body (up to yield) and close it."""
     gen = get_tenant_session(request, db)
-    next(gen)  # executes the reconcile + SET LOCAL (SET LOCAL no-ops on SQLite)
+    next(gen)  # executes the reconcile (+ SET LOCAL only on Postgres; skipped on SQLite)
     gen.close()
 
 
@@ -190,3 +190,33 @@ def test_tenant_session_no_stamp_without_query_param(db):
     req = _FakeRequest(portal_cuid=_SECOND_CUID, query_org_id=None)
     _drive(req, db)
     assert OrganizationsService.get_org_by_id(db, org.id).portal_org_id is None
+
+
+def test_tenant_session_skips_rls_on_sqlite(db, caplog):
+    """#69: RLS `SET LOCAL` is Postgres-only. On SQLite (prod) get_tenant_session must
+    NOT execute it — no RLS statement runs and no 'Failed to set RLS context' warning is
+    logged (previously it raised + was caught on every tenant request)."""
+    import logging
+
+    assert db.get_bind().dialect.name == "sqlite"  # sanity: this is the prod dialect
+    org = OrganizationsService.create_org(
+        db, name="Legacy", slug="legacy", portal_org_id=_SECOND_CUID
+    )
+
+    executed: list[str] = []
+    original_execute = db.execute
+
+    def _spy(statement, *args, **kwargs):
+        executed.append(str(statement))
+        return original_execute(statement, *args, **kwargs)
+
+    db.execute = _spy
+    caplog.set_level(logging.WARNING, logger="agencyos.middleware.tenant")
+    # org_id present on state so the RLS branch is reached (and correctly skipped).
+    req = _FakeRequest(portal_cuid=_SECOND_CUID, query_org_id=org.id, state_org_id=org.id)
+    _drive(req, db)
+
+    assert not any("SET LOCAL" in s for s in executed), executed
+    assert not any(
+        "Failed to set RLS context" in r.getMessage() for r in caplog.records
+    ), [r.getMessage() for r in caplog.records]
