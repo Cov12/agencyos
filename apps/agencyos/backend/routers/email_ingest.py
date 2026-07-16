@@ -50,15 +50,14 @@ class EmailWebhookPayload(BaseModel):
 
 
 def _verify_webhook_signature(request_body: bytes, signature: str) -> bool:
-    """Verify webhook HMAC signature if secret is configured."""
-    if not WEBHOOK_SECRET:
-        return True  # No verification if no secret
+    """Verify the webhook HMAC-SHA256 signature. The caller MUST ensure WEBHOOK_SECRET is
+    configured before calling; a missing/empty signature is rejected (never fail-open)."""
     expected = hmac.new(
         WEBHOOK_SECRET.encode(),
         request_body,
         hashlib.sha256,
     ).hexdigest()
-    return hmac.compare_digest(expected, signature)
+    return bool(signature) and hmac.compare_digest(expected, signature)
 
 
 @router.post("/ingest")
@@ -75,9 +74,16 @@ async def ingest_email(
     # Read raw body for signature verification
     body = await request.body()
 
-    # Verify webhook signature if configured
+    # Fail closed: an unconfigured secret means we cannot authenticate the caller, so we
+    # reject rather than accept unauthenticated proposal injection into any org (agencyos#56).
+    if not WEBHOOK_SECRET:
+        logger.error(
+            "email ingest rejected: AGENCYOS_EMAIL_WEBHOOK_SECRET is not configured"
+        )
+        raise HTTPException(status_code=503, detail="Email ingestion is not configured")
+
     signature = request.headers.get("X-Webhook-Signature", "")
-    if WEBHOOK_SECRET and not _verify_webhook_signature(body, signature):
+    if not _verify_webhook_signature(body, signature):
         logger.warning("Email webhook signature verification failed")
         raise HTTPException(status_code=401, detail="Invalid webhook signature")
 
