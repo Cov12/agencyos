@@ -79,43 +79,41 @@ def get_tenant_session(
     """
     org_id: Optional[str] = getattr(request.state, "org_id", None)
 
-    # #66 Stage 2 (Approach B): idempotent backfill of portal_org_id for org rows that
-    # predate Stage-2 provisioning. Hook point = this dependency because it is the ONE
-    # place that already has BOTH (a) the parsed Portal auth (the Portal CUID) and (b) a
-    # live db session, and it runs on every tenant-scoped route.
+    # #43 (security / defense-in-depth): the request path must NEVER assign or infer org
+    # ownership. It previously ran the #66 Approach-B reconcile here — stamping
+    # portal_org_id onto a NULL row keyed by the `org_id` query param — which meant a
+    # legacy unstamped org (portal_org_id NULL, slug != 'default') was CLAIMED by the
+    # FIRST Portal caller to reference it (trust-on-first-use), and then served that
+    # org's data. Because require_org_access (#41) depends on this session, the stamp
+    # ran BEFORE the ownership check, so the check could never fail-close.
     #
-    # Mapping (verified against the codebase, NOT guessed): on a Portal-authed request
-    # the JWT's org_id claim is the Portal CUID (JWTAuthMiddleware puts it on
-    # request.state.portal_auth.org_id AND request.state.org_id), while the AgencyOS-
-    # INTERNAL org id travels as the `org_id` QUERY PARAM — the same value the chat path
-    # (cortex_bridge._resolve_company_for_chat) and employee_tabs use to scope data to a
-    # row (AgencyOSOrganization.id == org_id). So we map CUID -> row via that query param,
-    # NOT via request.state.org_id (which is the CUID on the JWT path, never the row id).
-    #
-    # Runs BEFORE the SET LOCAL below: the stamp commits, and SET LOCAL is transaction-
-    # scoped, so doing it first keeps the RLS setting fresh for the handler's queries.
-    # stamp_portal_org_id never raises (it rolls back + swallows), so a reconcile failure
-    # cannot 500 a normal request.
+    # Ownership is now assigned ONLY at provisioning (OrganizationsService.create_org,
+    # #71 Approach A) and backfilled out-of-band (see migrations/004). The
+    # stamp_portal_org_id FUNCTION is retained for that backfill script but is no longer
+    # invoked implicitly on this data-serving read: a NULL row now fails closed at
+    # require_org_access (→ 403) instead of being claimable.
     portal_auth = getattr(request.state, "portal_auth", None)
     portal_cuid = getattr(portal_auth, "org_id", None) if portal_auth else None
     if portal_cuid:
-        from ..services.organizations import OrganizationsService
-
         internal_org_id = request.query_params.get("org_id")
         if internal_org_id:
-            OrganizationsService.stamp_portal_org_id(db, internal_org_id, portal_cuid)
+            # A1 (#27): mirror the org's Portal sub-account roster locally — but ONLY for
+            # an org the caller already OWNS. Same defense-in-depth rule as above: a read
+            # must not WRITE into a foreign (or unclaimed) org. Ownership == the row's
+            # existing portal_org_id matching the caller's Portal CUID (set at
+            # provisioning, never here). For a NULL/foreign row this is a no-op — the
+            # request itself is about to 403 at require_org_access. maybe_sync is
+            # throttled per-org and never raises, so an unreachable Portal just leaves
+            # the mirror as-is (business-scope-only), never a 500.
+            from ..services.organizations import OrganizationsService
 
-            # A1 (#27): mirror the org's Portal sub-account roster locally. Same hook
-            # as the #66 stamp above — it is the ONE place with (a) the Portal CUID,
-            # (b) the AgencyOS-internal org id (the `org_id` query param), (c) the raw
-            # Portal JWT (stashed by JWTAuthMiddleware), and (d) a live db session.
-            # maybe_sync is throttled per-org and never raises, so an unreachable
-            # Portal just leaves the mirror as-is (business-scope-only), never a 500.
-            portal_token = getattr(request.state, "portal_token", None)
-            if portal_token:
-                from ..services.subaccount_sync import maybe_sync
+            owned = OrganizationsService.get_org_by_id(db, internal_org_id)
+            if owned is not None and owned.portal_org_id == portal_cuid:
+                portal_token = getattr(request.state, "portal_token", None)
+                if portal_token:
+                    from ..services.subaccount_sync import maybe_sync
 
-                maybe_sync(db, internal_org_id, portal_cuid, portal_token)
+                    maybe_sync(db, internal_org_id, portal_cuid, portal_token)
 
     # RLS is a Postgres-only SECOND layer (migrations/001_rls_policies.sql). AgencyOS prod
     # runs on SQLite, which has no RLS — `SET LOCAL` there raises a syntax error on EVERY

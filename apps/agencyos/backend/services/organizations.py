@@ -65,10 +65,16 @@ class OrganizationsService:
           - it is not the WBIT-pinned 'default' org (left untouched by design; it is
             backfilled by migration 002 and pinned to …c0de via PORTAL_COMPANY_OVERRIDES).
 
-        Returns True iff a row was stamped. Defensive by contract: this runs in the
-        request path (see middleware.tenant.get_tenant_session), so it MUST NOT raise —
-        it rolls back and swallows on any failure, mirroring
-        cortex_bridge._portal_org_id_for."""
+        Returns True iff a row was stamped.
+
+        #43 (security): this must NOT run implicitly on a data-serving read — doing so
+        made an unstamped legacy org claimable by the first Portal caller (trust-on-
+        first-use). It is no longer called from middleware.tenant.get_tenant_session;
+        ownership is assigned at provisioning (create_org) and this helper is reserved
+        for the OUT-OF-BAND backfill of legit legacy rows (migrations/004), where the
+        (org -> Portal CUID) mapping has been established from a trusted source. It stays
+        defensive by contract — never raises: rolls back and swallows on any failure,
+        mirroring cortex_bridge._portal_org_id_for."""
         if not internal_org_id or not portal_org_id:
             return False
         try:

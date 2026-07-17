@@ -5,10 +5,11 @@ Covers:
     NULL when unknown).
   * Second-org resolution: a newly provisioned org with its own Portal CUID
     resolves via cortex_bridge to its OWN uuid5 company — NOT the WBIT default …c0de.
-  * Approach B: the idempotent reconcile stamps NULL rows, never overwrites a
-    non-null value, and leaves the 'default' (WBIT-pinned) org untouched; plus the
-    get_tenant_session hook mapping (Portal CUID from the JWT, internal org id from
-    the `org_id` query param).
+  * Approach B: the idempotent reconcile HELPER stamps NULL rows, never overwrites a
+    non-null value, and leaves the 'default' (WBIT-pinned) org untouched. It is now an
+    OUT-OF-BAND backfill helper only (see migrations/004).
+  * #43 (security): the reconcile no longer runs on the get_tenant_session read path —
+    a Portal-authed request referencing a NULL org does NOT claim it (fail-closed).
 
 Runs against an in-memory SQLite DB built from the (conftest-stubbed) declarative
 Base — see apps/agencyos/conftest.py.
@@ -143,37 +144,46 @@ def test_stamp_reconcile_guards_empty_inputs(db):
     assert OrganizationsService.stamp_portal_org_id(db, "x", "") is False
 
 
-# --- Approach B: get_tenant_session hook (CUID -> row via query param) --------
+# --- #43: get_tenant_session must NEVER stamp on a read (fail-closed) ---------
+#
+# The old #66 Approach-B request-path reconcile stamped portal_org_id here, which
+# let the FIRST Portal caller CLAIM an unstamped legacy org (trust-on-first-use).
+# That call has been removed: the tenant-session read now assigns NO ownership. A
+# NULL row stays NULL and fails closed downstream at require_org_access (#41).
 
 class _FakeState:
-    def __init__(self, portal_cuid, state_org_id):
+    def __init__(self, portal_cuid, state_org_id, portal_token=None):
         self.portal_auth = types.SimpleNamespace(org_id=portal_cuid) if portal_cuid else None
         self.org_id = state_org_id
+        self.portal_token = portal_token
 
 
 class _FakeRequest:
     """Minimal stand-in for the pieces get_tenant_session reads."""
 
-    def __init__(self, portal_cuid=None, query_org_id=None, state_org_id=None):
-        self.state = _FakeState(portal_cuid, state_org_id)
+    def __init__(self, portal_cuid=None, query_org_id=None, state_org_id=None, portal_token=None):
+        self.state = _FakeState(portal_cuid, state_org_id, portal_token)
         self.query_params = {"org_id": query_org_id} if query_org_id else {}
 
 
 def _drive(request, db):
     """Run the get_tenant_session generator body (up to yield) and close it."""
     gen = get_tenant_session(request, db)
-    next(gen)  # executes the reconcile (+ SET LOCAL only on Postgres; skipped on SQLite)
+    next(gen)  # (no-longer-stamping) hook + SET LOCAL (Postgres-only; skipped on SQLite)
     gen.close()
 
 
-def test_tenant_session_stamps_via_query_param_on_portal_request(db):
-    """A Portal-authed request (CUID on the JWT, internal id in ?org_id=) stamps
-    the matched NULL row."""
+def test_tenant_session_does_not_stamp_null_org_on_portal_read(db):
+    """#43 TOFU fix: a Portal-authed request (CUID on the JWT, internal id in ?org_id=)
+    referencing a NULL-portal_org_id org MUST NOT claim it — the row stays NULL so the
+    downstream require_org_access binding fails closed instead of serving the org."""
     org = OrganizationsService.create_org(db, name="Legacy", slug="legacy")
+    assert org.portal_org_id is None
     # JWT carries the CUID; the frontend passes the INTERNAL org id as ?org_id=.
     req = _FakeRequest(portal_cuid=_SECOND_CUID, query_org_id=org.id)
     _drive(req, db)
-    assert OrganizationsService.get_org_by_id(db, org.id).portal_org_id == _SECOND_CUID
+    # Unchanged: the read did not assign ownership.
+    assert OrganizationsService.get_org_by_id(db, org.id).portal_org_id is None
 
 
 def test_tenant_session_no_stamp_without_portal_auth(db):
