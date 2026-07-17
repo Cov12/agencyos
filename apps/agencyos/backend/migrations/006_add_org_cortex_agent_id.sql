@@ -1,0 +1,11 @@
+-- 006_add_org_cortex_agent_id.sql
+-- Adds agencyos_organization.cortex_agent_id — the per-org Cortex assistant agent id,
+-- provisioned lazily by cortex_bridge (which calls the plugin's ensure-agent verb the
+-- first time an org chats, then caches the returned id here). NULL until first chat; the
+-- WBIT default company keeps its pinned WBIT_AGENT_ID and never needs a row here.
+--
+-- ⚠️ AgencyOS prod is SQLite; create_all() does not ALTER existing tables, so apply by
+--    hand once from the AgencyOS service shell (python3 is available; sqlite3 CLI is not):
+--   python3 -c "import sqlite3; c=sqlite3.connect('/app/backend/data/webui.db'); \
+--     c.execute('ALTER TABLE agencyos_organization ADD COLUMN cortex_agent_id TEXT'); c.commit()"
+ALTER TABLE agencyos_organization ADD COLUMN cortex_agent_id TEXT;

@@ -327,6 +327,88 @@ async def _send(
     }
 
 
+def _ensure_agent_url() -> str:
+    """The ensure-agent verb is a sibling of /chat on the same plugin base."""
+    base = _bridge_url()
+    if base.endswith("/chat"):
+        return base[: -len("/chat")] + "/ensure-agent"
+    return base.rstrip("/") + "/ensure-agent"
+
+
+async def _ensure_company_agent(company_id: str) -> Optional[str]:
+    """Ask Cortex to guarantee this company has its assistant agent (idempotent) and
+    return the agent id. Cortex creates the company + clones the template agent on the
+    first call. Returns None on any failure — never raises into the chat path."""
+    secret = _bridge_secret()
+    if not secret or not company_id:
+        return None
+    headers = {"Content-Type": "application/json", "x-wbit-bridge-secret": secret}
+    try:
+        async with httpx.AsyncClient(timeout=_timeout_s()) as client:
+            resp = await client.post(
+                _ensure_agent_url(), json={"companyId": company_id}, headers=headers
+            )
+    except httpx.RequestError as e:
+        logger.warning(f"cortex_bridge: ensure-agent request error: {e}")
+        return None
+    if resp.status_code not in (200, 201):
+        logger.warning(f"cortex_bridge: ensure-agent returned {resp.status_code}")
+        return None
+    try:
+        return (resp.json() or {}).get("agentId") or None
+    except ValueError:
+        return None
+
+
+def _cached_agent_id(db: Optional[Session], org_id: Optional[str]) -> Optional[str]:
+    if db is None or not org_id:
+        return None
+    try:
+        from ..models.db import AgencyOSOrganization
+
+        row = db.query(AgencyOSOrganization).filter_by(id=org_id).first()
+        return getattr(row, "cortex_agent_id", None) if row else None
+    except Exception:
+        return None
+
+
+def _store_agent_id(
+    db: Optional[Session], org_id: Optional[str], agent_id: Optional[str]
+) -> None:
+    """Cache (or clear, when agent_id is None) the org's resolved Cortex agent id."""
+    if db is None or not org_id:
+        return
+    try:
+        from ..models.db import AgencyOSOrganization
+
+        row = db.query(AgencyOSOrganization).filter_by(id=org_id).first()
+        if row is not None and getattr(row, "cortex_agent_id", None) != agent_id:
+            row.cortex_agent_id = agent_id
+            db.commit()
+    except Exception:
+        try:
+            db.rollback()
+        except Exception:
+            pass
+
+
+async def _resolve_agent_id(db: Optional[Session], org_id: str, company_id: str) -> str:
+    """Resolve the assistant agent id for this org's Cortex company: a cached per-org id,
+    else the WBIT pin for the default company, else provision idempotently via ensure-agent
+    (caching the result). Falls back to the configured default agent if provisioning fails
+    (behaviour no worse than before this change)."""
+    cached = _cached_agent_id(db, org_id)
+    if cached:
+        return cached
+    if company_id == _default_company_id() and os.environ.get("WBIT_AGENT_ID", "").strip():
+        return os.environ["WBIT_AGENT_ID"].strip()
+    provisioned = await _ensure_company_agent(company_id)
+    if provisioned:
+        _store_agent_id(db, org_id, provisioned)
+        return provisioned
+    return _agent_id()
+
+
 # --- high-level entry --------------------------------------------------------
 
 async def handle_chat(
@@ -343,13 +425,31 @@ async def handle_chat(
     unchanged.
     """
     session_id = _load_session_id(db, chat_id)
+    company_id = _resolve_company_for_chat(db, org_id)
+    agent_id = await _resolve_agent_id(db, org_id, company_id)
     result = await _send(
         prompt=message,
-        company_id=_resolve_company_for_chat(db, org_id),
-        agent_id=_agent_id(),
+        company_id=company_id,
+        agent_id=agent_id,
         session_id=session_id,
         sub_account_id=sub_account_id,
     )
+
+    # A 404 means the agent is not in this company (deleted, or a first use raced the
+    # cache). Re-provision the company assistant and retry once.
+    if not result.get("ok") and result.get("status_code") == 404:
+        logger.info("cortex_bridge: agent 404 — re-provisioning company assistant")
+        _store_agent_id(db, org_id, None)
+        agent_id = await _ensure_company_agent(company_id)
+        if agent_id:
+            _store_agent_id(db, org_id, agent_id)
+            result = await _send(
+                prompt=message,
+                company_id=company_id,
+                agent_id=agent_id,
+                session_id=session_id,
+                sub_account_id=sub_account_id,
+            )
 
     if not result.get("ok"):
         logger.warning(f"cortex_bridge: chat failed: {result.get('error')}")
