@@ -56,7 +56,23 @@ async def list_organizations(
     if portal_cuid:
         orgs = OrganizationsService.list_orgs_for_portal(db, portal_cuid)
     else:
-        orgs = OrganizationsService.list_orgs(db)
+        # OWUI-session path (prod): scope to the authenticated user's memberships. Never
+        # enumerate other tenants' orgs (cross-tenant leak), and only return orgs the user
+        # actually belongs to so the frontend can't pick a foreign org (which then 403s
+        # every scoped call). List-all is retained ONLY for the unauthenticated dev/header
+        # path (no resolvable OWUI user) — non-prod.
+        from ..middleware.deps import _resolve_owui_user_id
+
+        owui_user_id = _resolve_owui_user_id(request)
+        if owui_user_id:
+            member_org_ids = {
+                m.org_id for m in OrganizationsService.get_user_orgs(db, owui_user_id)
+            }
+            orgs = [
+                o for o in OrganizationsService.list_orgs(db) if o.id in member_org_ids
+            ]
+        else:
+            orgs = OrganizationsService.list_orgs(db)
     return [
         {"id": o.id, "name": o.name, "slug": o.slug, "plan": o.plan}
         for o in orgs
