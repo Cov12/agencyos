@@ -194,26 +194,21 @@ export const createOrganization = async (
 };
 
 export const getOrganizationForUser = async (token: string) => {
-	// TODO: Backend endpoint to look up org by authenticated user membership
-	// Try stored org first, then list all orgs and take the first one
+	// The active org MUST be one the authenticated user belongs to. Fetch the user's
+	// orgs (server-side, membership-scoped) and reconcile any stored id against that
+	// list — a stored id left over from a DIFFERENT account/session in the same browser
+	// must never be reused, or every scoped call 403s. Fall back to the first member org.
 	try {
-		const storedOrgId = typeof localStorage !== 'undefined' ? localStorage.getItem('agencyos-org-id') : null;
-		if (storedOrgId) {
-			try {
-				const org = await getOrganization(token, storedOrgId);
-				return org;
-			} catch {
-				// Stored org no longer valid, clear and try listing
-				localStorage.removeItem('agencyos-org-id');
-			}
-		}
-		// Fallback: list orgs and use first available
 		const orgs = await listOrganizations(token);
-		if (orgs && orgs.length > 0) {
-			localStorage.setItem('agencyos-org-id', orgs[0].id);
-			return orgs[0];
+		const hasLS = typeof localStorage !== 'undefined';
+		if (!orgs || orgs.length === 0) {
+			if (hasLS) localStorage.removeItem('agencyos-org-id');
+			return null;
 		}
-		return null;
+		const storedOrgId = hasLS ? localStorage.getItem('agencyos-org-id') : null;
+		const chosen = (storedOrgId && orgs.find((o) => o.id === storedOrgId)) || orgs[0];
+		if (hasLS) localStorage.setItem('agencyos-org-id', chosen.id);
+		return chosen;
 	} catch {
 		return null;
 	}

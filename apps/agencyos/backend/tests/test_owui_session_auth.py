@@ -242,6 +242,16 @@ def test_unauthenticated_denied_without_flag(client, monkeypatch):
     assert resp.status_code == 403, resp.text
 
 
+def test_org_list_scoped_to_owui_membership(client):
+    """GET /orgs/ on the OWUI-session path returns ONLY the caller's member orgs — never
+    every tenant's (cross-tenant enumeration + the wrong active-org selection that 403s
+    all scoped calls). USER_MEMBER is a member of ORG_A and ORG_NOCORTEX, not ORG_B."""
+    resp = client.get("/api/agencyos/orgs/", headers=_auth(USER_MEMBER))
+    assert resp.status_code == 200, resp.text
+    ids = {o["id"] for o in resp.json()}
+    assert ids == {ORG_A, ORG_NOCORTEX}, ids
+
+
 # ── login provisioning: persists AgencyOSMember + app_access ───────────────────
 #
 # portal_auth_callback imports the whole OWUI backend (unavailable in the requirements-min
