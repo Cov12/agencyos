@@ -43,30 +43,58 @@ def _jwt_secret() -> str:
     return JWT_SECRET or os.environ.get("JWT_SECRET", "")
 
 
-def _decode_ws_token(token: str) -> dict[str, Any]:
-    """Decode and validate a WebSocket auth token.
+def _owui_ws_secret() -> str:
+    """OWUI session-token secret (mirrors env.py / middleware.deps)."""
+    return (
+        os.environ.get("WEBUI_SECRET_KEY")
+        or os.environ.get("WEBUI_JWT_SECRET_KEY")
+        or "t0p-s3cr3t"
+    )
 
-    Supports two auth modes:
-    1. Portal JWT (JWT_SECRET configured) — full JWT decode
-    2. OpenWebUI token fallback — accept token as-is, return minimal payload
 
-    Args:
-        token: Bearer token provided via query param.
+def _authorize_voice_ws(token: str, requested_org_id: str, db) -> str | None:
+    """Authorize a voice WS to `requested_org_id` (the AgencyOS-INTERNAL org id), binding
+    the connection to the caller's real identity — mirrors middleware/deps.require_org_access
+    (agencyos#55). There is NO unauthenticated fallback: an unverifiable token or a caller
+    who is not entitled to the org is rejected.
 
-    Returns:
-        Decoded JWT payload or synthetic payload for OpenWebUI tokens.
+      1. Portal JWT (JWT_SECRET): the org_id claim is the Portal CUID — require the
+         requested internal org's portal_org_id to equal it.
+      2. OWUI session token (WEBUI_SECRET_KEY, payload {"id": user.id}): require the
+         requested org to be one of the caller's AgencyOSMember orgs.
+
+    Returns the resolved caller id on success, else None.
     """
+    from ..services.organizations import OrganizationsService
+
+    # 1. Portal-JWT path.
     secret = _jwt_secret()
     if secret:
         try:
-            return jwt.decode(token, secret, algorithms=[JWT_ALGORITHM or "HS256"])
+            claims = jwt.decode(token, secret, algorithms=[JWT_ALGORITHM or "HS256"])
         except JWTError:
-            pass
+            claims = None
+        if isinstance(claims, dict) and claims.get("org_id"):
+            org = OrganizationsService.get_org_by_id(db, requested_org_id)
+            if org is not None and org.portal_org_id == claims.get("org_id"):
+                return claims.get("sub") or claims.get("user_id")
+            return None  # Portal token, but not for this org.
 
-    # Fallback: Accept OpenWebUI session tokens without JWT decode
-    # TODO: Validate against OpenWebUI's user table when available
-    logger.info("Using OpenWebUI token fallback for voice WS auth")
-    return {"sub": "owui-user", "org_id": None, "token": token}
+    # 2. OWUI-session path.
+    try:
+        owui = jwt.decode(token, _owui_ws_secret(), algorithms=["HS256"])
+    except JWTError:
+        owui = None
+    if isinstance(owui, dict) and owui.get("id"):
+        user_id = owui["id"]
+        member_org_ids = {
+            m.org_id for m in OrganizationsService.get_user_orgs(db, user_id)
+        }
+        if requested_org_id in member_org_ids:
+            return user_id
+        return None  # Valid OWUI user, but not a member of this org.
+
+    return None  # Neither path authorized.
 
 
 def _safe_b64decode(data: str) -> bytes:
@@ -199,18 +227,15 @@ async def voice_ws(websocket: WebSocket) -> None:
         await websocket.close(code=1008)
         return
 
-    payload = _decode_ws_token(token)
-
-    # Use org_id from token if available, otherwise trust query param
-    token_org_id = payload.get("org_id") or org_id
-    user_id = payload.get("user_id") or payload.get("sub")
-
-    if token_org_id and token_org_id != org_id:
-        await _send_error(websocket, "org_id mismatch")
-        await websocket.close(code=1008)
-        return
+    # Authorize: bind the requested org to the caller's real identity (agencyos#55).
+    # No unauthenticated fallback — an unverifiable token or a non-member is rejected.
+    db = next(get_session())
+    try:
+        user_id = _authorize_voice_ws(token, org_id, db)
+    finally:
+        db.close()
     if not user_id:
-        await _send_error(websocket, "Token missing user_id/sub")
+        await _send_error(websocket, "Unauthorized for this org")
         await websocket.close(code=1008)
         return
 
@@ -218,7 +243,7 @@ async def voice_ws(websocket: WebSocket) -> None:
     audio_chunks: list[bytes] = []
     conversation_history: list[dict[str, str]] = []
     # Preserve original token for internal API calls (STT/TTS auth)
-    auth_token = payload.get("token") or token
+    auth_token = token
 
     logger.info(
         "Voice WS connected: org_id=%s user_id=%s department=%s",
