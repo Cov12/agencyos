@@ -102,3 +102,17 @@ def test_handle_chat_reprovisions_and_retries_on_404(db, monkeypatch):
     assert result["content"] == "the launch is Q4"
     assert calls["send"] == 2   # retried after 404
     assert calls["ensure"] == 1  # re-provisioned once
+
+
+def test_ensure_agent_url_is_core_route(monkeypatch):
+    monkeypatch.setattr(
+        cortex_bridge, "_bridge_url",
+        lambda: "https://cortex.example/api/plugins/pid/api/chat",
+    )
+    monkeypatch.delenv("CORTEX_ENSURE_AGENT_URL", raising=False)
+    assert cortex_bridge._ensure_agent_url() == "https://cortex.example/api/bridge/ensure-agent"
+
+
+def test_ensure_agent_url_env_override(monkeypatch):
+    monkeypatch.setenv("CORTEX_ENSURE_AGENT_URL", "https://x.example/ensure")
+    assert cortex_bridge._ensure_agent_url() == "https://x.example/ensure"
