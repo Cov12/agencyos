@@ -63,6 +63,10 @@ class AgencyOSOrganization(Base):
     # Cortex persists app_access. Added to existing prod rows by migration 005; NULL/[]
     # means "no apps entitled" (fail-closed).
     app_access = Column(JSON, server_default="[]")
+    # Per-org Cortex assistant agent id, provisioned lazily by cortex_bridge (ensure-agent
+    # verb) so each org's company has its own assistant. NULL until first chat; the WBIT
+    # default company keeps its pinned WBIT_AGENT_ID. Added to prod by migration 006.
+    cortex_agent_id = Column(String, nullable=True)
 
     created_at = Column(BigInteger, default=now_ms)
     updated_at = Column(BigInteger, default=now_ms)
