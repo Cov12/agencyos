@@ -328,11 +328,17 @@ async def _send(
 
 
 def _ensure_agent_url() -> str:
-    """The ensure-agent verb is a sibling of /chat on the same plugin base."""
-    base = _bridge_url()
-    if base.endswith("/chat"):
-        return base[: -len("/chat")] + "/ensure-agent"
-    return base.rstrip("/") + "/ensure-agent"
+    """Cortex CORE route (not a plugin verb): POST {cortex-origin}/api/bridge/ensure-agent,
+    authed by the same x-wbit-bridge-secret as /chat. Derived from the bridge URL's origin;
+    override with CORTEX_ENSURE_AGENT_URL. (The plugin runs in an isolated worker with no
+    agent-create RPC, and the plugin path 404s a missing company before the handler runs, so
+    provisioning lives in a core route.)"""
+    override = os.environ.get("CORTEX_ENSURE_AGENT_URL", "").strip()
+    if override:
+        return override
+    m = re.match(r"^(https?://[^/]+)", _bridge_url())
+    origin = m.group(1) if m else _bridge_url().rstrip("/")
+    return origin + "/api/bridge/ensure-agent"
 
 
 async def _ensure_company_agent(company_id: str) -> Optional[str]:
