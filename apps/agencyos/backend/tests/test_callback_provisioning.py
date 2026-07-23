@@ -233,3 +233,44 @@ def test_portal_auth_callback_invokes_provisioning(monkeypatch, db):
     assert captured["payload"]["org_id"] == CUID
     assert captured["payload"]["app_access"] == ["AGENCYOS", "DRIVE", "WORKPIPE"]
     assert captured["payload"]["role"] == "OWNER"
+
+
+def test_portal_auth_callback_syncs_subaccounts(monkeypatch, db):
+    """Sub-account mirror sync must run at LOGIN (the only place with the raw Portal JWT),
+    not on the OWUI request path — else the mirror stays empty and the dashboard shows 0
+    sub-accounts (agencyos#67). Assert the callback calls maybe_sync with the resolved
+    internal org id, the Portal CUID, and the RAW token."""
+    _install_owui_stubs_for_callback()
+    from apps.agencyos.backend.routers import auth_callback
+    from apps.agencyos.backend.services import subaccount_sync
+
+    monkeypatch.setenv("JWT_SECRET", "test-portal-secret")
+    fake_user = types.SimpleNamespace(id=UID, name="Acme Owner")
+    monkeypatch.setattr(auth_callback.Users, "get_user_by_email",
+                        staticmethod(lambda email, db=None: fake_user))
+    monkeypatch.setattr(auth_callback, "create_token", lambda **k: "owui-token")
+    monkeypatch.setattr(auth_callback, "parse_duration", lambda v: None)
+    monkeypatch.setattr(auth_callback, "get_session", lambda: iter([db]))
+    # provisioning creates the org row so get_org_by_portal_id resolves it
+    monkeypatch.setattr(
+        OrganizationsService, "provision_from_portal",
+        staticmethod(lambda _db, uid, payload: db.add(AgencyOSOrganization(
+            id="org-synced", name="Acme", slug="acme", portal_org_id=CUID)) or db.commit()),
+    )
+
+    captured = {}
+    monkeypatch.setattr(subaccount_sync, "maybe_sync",
+                        lambda _db, org_id, cuid, tok: captured.update(
+                            org_id=org_id, cuid=cuid, tok=tok))
+
+    token = pyjwt.encode(_payload(), "test-portal-secret", algorithm="HS256")
+    req = types.SimpleNamespace(
+        app=types.SimpleNamespace(state=types.SimpleNamespace(
+            config=types.SimpleNamespace(DEFAULT_GROUP_ID=None, JWT_EXPIRES_IN="1h"))),
+        url="http://test/agencyos/auth/callback",
+    )
+    resp = asyncio.run(auth_callback.portal_auth_callback(request=req, token=token))
+    assert resp.status_code == 303
+    assert captured.get("org_id") == "org-synced"
+    assert captured.get("cuid") == CUID
+    assert captured.get("tok") == token   # the RAW Portal JWT, not the OWUI token

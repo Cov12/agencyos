@@ -145,6 +145,23 @@ async def portal_auth_callback(
 
         OrganizationsService.provision_from_portal(db, user.id, payload)
 
+        # Mirror the org's Portal sub-account roster locally (agencyos#67). This is the ONE
+        # place in prod that holds the raw Portal JWT (`token`) needed to pull Portal's
+        # GET /api/subaccounts — the request path only ever sees the OWUI session token, so
+        # the old get_tenant_session hook never fired in prod and the mirror stayed empty
+        # (dashboard showed 0 sub-accounts). maybe_sync is throttled per-org and never
+        # raises, so an unreachable Portal just leaves the mirror as-is, never breaks login.
+        try:
+            portal_cuid = payload.get("org_id")
+            if portal_cuid:
+                org = OrganizationsService.get_org_by_portal_id(db, portal_cuid)
+                if org is not None:
+                    from ..services.subaccount_sync import maybe_sync
+
+                    maybe_sync(db, org.id, portal_cuid, token)
+        except Exception as e:
+            logger.warning(f"AgencyOS sub-account sync at login failed (non-fatal): {e}")
+
         # Create OWUI session token
         expires_delta = parse_duration(request.app.state.config.JWT_EXPIRES_IN)
         expires_at = None
