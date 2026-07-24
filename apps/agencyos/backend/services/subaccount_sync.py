@@ -119,18 +119,24 @@ def _fetch_subaccounts(token: str) -> Optional[list[dict]]:
 
 
 def _extract_list(data) -> Optional[list[dict]]:
-    """Normalize Portal's response into a list of dicts. None if it isn't one."""
+    """Normalize Portal's response into a list of dicts. None if it isn't one.
+
+    Portal returns a wrapped envelope, e.g. {"subAccounts": [...]}. Pick the wrapper by
+    KEY PRESENCE, not truthiness — an empty list [] is a valid "no sub-accounts" answer and
+    must NOT be misread as an absent key (the `x.get(k) or ...` idiom does exactly that,
+    since [] is falsy, and mislabels a 0-sub-account org as an 'unexpected payload shape')."""
     if isinstance(data, list):
         candidate = data
     elif isinstance(data, dict):
-        candidate = (
-            data.get("data")
-            or data.get("subAccounts")
-            or data.get("subaccounts")
-        )
-        if candidate is None and not data:
-            # An empty object {} means "no sub-accounts", not an error.
-            return []
+        candidate = None
+        for key in ("data", "subAccounts", "subaccounts"):
+            if key in data:
+                candidate = data[key]
+                break
+        if candidate is None:
+            # No known wrapper key present: an empty object {} means "no sub-accounts";
+            # anything else is an unexpected shape.
+            return [] if not data else None
     else:
         return None
     if not isinstance(candidate, list):
@@ -176,6 +182,24 @@ def sync_org_subaccounts(
                 .filter(AgencyOSSubAccount.id == sid)
                 .one_or_none()
             )
+            # Defense-in-depth: never STEAL a sub-account row across Portal orgs. Portal
+            # ids are globally unique and each org's sync only fetches its own, so this
+            # should never trigger — but if a mismatched (org, token) call ever occurred it
+            # must not reassign a row that belongs to a DIFFERENT Portal org. A re-provision
+            # under a new AgencyOS internal id keeps the SAME portal_org_id, so that legit
+            # case still updates (only a DIFFERENT portal_org_id is refused).
+            if (
+                row is not None
+                and row.portal_org_id
+                and portal_org_id
+                and row.portal_org_id != portal_org_id
+            ):
+                logger.warning(
+                    "subaccount_sync: sub-account %s already owned by portal_org %s, not %s"
+                    " — refusing cross-tenant reassignment",
+                    sid, row.portal_org_id, portal_org_id,
+                )
+                continue
             if row is None:
                 db.add(
                     AgencyOSSubAccount(

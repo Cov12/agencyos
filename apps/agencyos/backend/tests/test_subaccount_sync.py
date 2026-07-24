@@ -215,9 +215,38 @@ def test_extract_list_accepts_bare_array_and_envelopes():
     assert subaccount_sync._extract_list({"data": [{"id": "b"}]}) == [{"id": "b"}]
     assert subaccount_sync._extract_list({"subAccounts": [{"id": "c"}]}) == [{"id": "c"}]
     assert subaccount_sync._extract_list({}) == []  # empty object -> no sub-accounts
+    # The prod bug (#67): an org with 0 sub-accounts returns {"subAccounts": []}. The empty
+    # list must parse as [] (no sub-accounts), NOT be misread as an unexpected/absent shape.
+    assert subaccount_sync._extract_list({"subAccounts": []}) == []
+    assert subaccount_sync._extract_list({"data": []}) == []
+    assert subaccount_sync._extract_list([]) == []
     # Unexpected shapes -> None (treated as a failure by the caller).
     assert subaccount_sync._extract_list("nope") is None
     assert subaccount_sync._extract_list({"data": "notalist"}) is None
+
+
+def test_sync_refuses_cross_tenant_reassignment(db, monkeypatch):
+    """Defense-in-depth: a sub-account row already owned by one Portal org must never be
+    STOLEN by a sync running for a DIFFERENT Portal org (a mismatched (org, token) call).
+    Its org binding stays put; the offending sync skips that id."""
+    org_a = OrganizationsService.create_org(db, name="A", slug="a", portal_org_id="cmportalaaaa0000aaaa0000")
+    org_b = OrganizationsService.create_org(db, name="B", slug="b", portal_org_id="cmportalbbbb0000bbbb0000")
+
+    # Org A legitimately owns SA1.
+    monkeypatch.setattr(subaccount_sync, "_fetch_subaccounts",
+                        lambda token: [{"id": _SA1, "name": "A-sub", "status": "active"}])
+    subaccount_sync.sync_org_subaccounts(db, org_a.id, "cmportalaaaa0000aaaa0000", _TOKEN)
+    row = db.query(AgencyOSSubAccount).filter_by(id=_SA1).one()
+    assert row.org_id == org_a.id and row.portal_org_id == "cmportalaaaa0000aaaa0000"
+
+    # A sync for org B that (wrongly) returns SA1 must NOT move it to B.
+    subaccount_sync._last_attempt_ms.clear()
+    subaccount_sync.sync_org_subaccounts(db, org_b.id, "cmportalbbbb0000bbbb0000", _TOKEN)
+    row = db.query(AgencyOSSubAccount).filter_by(id=_SA1).one()
+    assert row.org_id == org_a.id, "cross-tenant reassignment must be refused"
+    assert row.portal_org_id == "cmportalaaaa0000aaaa0000"
+    # And B did not gain a bogus copy.
+    assert _rows(db, org_b.id) == []
 
 
 # --- read helpers ------------------------------------------------------------
