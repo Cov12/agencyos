@@ -96,6 +96,12 @@ def mount_agencyos(app: FastAPI) -> None:
             AgencyOSSubAccount.__table__,
         ]
         Base.metadata.create_all(bind=engine, tables=agencyos_tables)
+        # create_all() only makes missing TABLES — it never ALTERs an existing one. Add any
+        # model columns missing from the live schema so a column-add self-applies on deploy
+        # (no more "no such column" 500s from a missed manual migration). See db_schema.py.
+        from .db_schema import ensure_columns
+
+        ensure_columns(engine, agencyos_tables)
         logger.info("AgencyOS database tables verified/created")
     except Exception as e:
         logger.warning(f"AgencyOS table creation skipped: {e}")
