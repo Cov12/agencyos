@@ -629,6 +629,35 @@
 	};
 
 	onMount(async () => {
+		// Session-switch fix (agencyos#70): a Portal SSO login (portal_auth_callback) sets the
+		// OWUI session token as a JS-readable `token` cookie but cannot touch localStorage — and
+		// OWUI authenticates with localStorage.token. So a stale token from a PREVIOUS account in
+		// the same browser would win, and the AgencyOS session would not switch on account change.
+		// Adopt the cookie here, BEFORE the session bootstrap below reads localStorage.token, when
+		// it is at least as fresh (by exp). Safe: normal login sets both in sync (equal -> no-op);
+		// signout deletes the `token` cookie (nothing to adopt); the exp guard never reverts to an
+		// older session.
+		try {
+			const _m = document.cookie.match(/(?:^|;\s*)token=([^;]+)/);
+			const _cookieToken = _m ? decodeURIComponent(_m[1]) : null;
+			if (_cookieToken && _cookieToken !== localStorage.token) {
+				const _exp = (t) => {
+					try {
+						return (
+							JSON.parse(atob(t.split('.')[1].replace(/-/g, '+').replace(/_/g, '/'))).exp ?? 0
+						);
+					} catch (e) {
+						return 0;
+					}
+				};
+				if (!localStorage.token || _exp(_cookieToken) >= _exp(localStorage.token)) {
+					localStorage.setItem('token', _cookieToken);
+				}
+			}
+		} catch (e) {
+			// non-fatal: fall back to whatever localStorage already holds
+		}
+
 		window.addEventListener('message', windowMessageEventHandler);
 
 		let touchstartY = 0;
