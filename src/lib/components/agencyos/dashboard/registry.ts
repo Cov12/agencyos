@@ -18,6 +18,7 @@
 import type { ComponentType } from 'svelte';
 import {
 	getDashboardCortexHistory,
+	getDashboardDriveSummary,
 	getDashboardWorkPipeContacts,
 	getDashboardWorkPipePipelines,
 	getDashboardWorkPipeStats,
@@ -25,6 +26,7 @@ import {
 	getOrgSubAccounts
 } from '$lib/apis/agencyos';
 import CortexRecentRunsWidget from './widgets/CortexRecentRunsWidget.svelte';
+import DriveSummaryWidget from './widgets/DriveSummaryWidget.svelte';
 import OrganizationWidget from './widgets/OrganizationWidget.svelte';
 import SubAccountsWidget from './widgets/SubAccountsWidget.svelte';
 import WorkPipeKpiWidget from './widgets/WorkPipeKpiWidget.svelte';
@@ -121,5 +123,16 @@ export const dashboardWidgets: DashboardWidget[] = [
 		load: async (token, orgId, subAccountId) =>
 			(await getDashboardCortexHistory(token, orgId, subAccountId, 8)).data,
 		component: CortexRecentRunsWidget
+	},
+	{
+		id: 'drive-summary',
+		title: 'Drive',
+		icon: 'folder_open',
+		span: 1,
+		// Drive summary works at business scope too — the endpoint treats a null
+		// subAccountId as the org-wide (business) view, so no sub-account gate needed.
+		load: async (token, orgId, subAccountId) =>
+			(await getDashboardDriveSummary(token, orgId, subAccountId)).data,
+		component: DriveSummaryWidget
 	}
 ];

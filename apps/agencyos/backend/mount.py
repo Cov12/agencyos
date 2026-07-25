@@ -16,6 +16,7 @@ from .routers.proposals import router as proposals_router
 from .routers.organizations import router as organizations_router
 from .routers.dashboard_workpipe import router as dashboard_workpipe_router
 from .routers.dashboard_cortex import router as dashboard_cortex_router
+from .routers.dashboard_drive import router as dashboard_drive_router
 from .routers.email_ingest import router as email_router
 from .routers.voice import router as voice_router
 from .routers.auth_callback import router as auth_callback_router
@@ -55,6 +56,7 @@ def mount_agencyos(app: FastAPI) -> None:
     app.include_router(employee_tabs_router)  # Dynamic employee tabs
     app.include_router(dashboard_workpipe_router)  # Dashboard D2 WorkPipe HTTP reads
     app.include_router(dashboard_cortex_router)  # Dashboard D4b Cortex history reads
+    app.include_router(dashboard_drive_router)  # Dashboard Drive summary reads
     app.include_router(email_router)
     app.include_router(voice_router)
 
