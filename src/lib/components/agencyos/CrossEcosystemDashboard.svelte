@@ -26,9 +26,9 @@
 	let loadingSubAccounts = false;
 
 	// Per-widget state, keyed by widget id
-	type WidgetState = { loading: boolean; error: boolean; data: unknown };
+	type WidgetState = { loading: boolean; error: boolean; unavailable: boolean; data: unknown };
 	let widgetStates: Record<string, WidgetState> = Object.fromEntries(
-		dashboardWidgets.map((w) => [w.id, { loading: true, error: false, data: null }])
+		dashboardWidgets.map((w) => [w.id, { loading: true, error: false, unavailable: false, data: null }])
 	);
 
 	// Predefined span classes (Tailwind can't purge dynamic class names)
@@ -60,6 +60,21 @@
 		}
 	}
 
+	// A widget's app may simply not be enabled for this workspace (entitlement/authorization
+	// denial) — that is EXPECTED, not a failure. The backend surfaces it as an HTTP 403 whose
+	// `detail` (which apiCall throws) is "App access denied: <APP>" / "Org access denied" /
+	// "Org admin access required". Treat those as a muted "not enabled" state, not a red error.
+	function isNotEnabled(err: unknown): boolean {
+		const msg = String(
+			typeof err === 'string'
+				? err
+				: (err && typeof err === 'object' && 'detail' in err
+						? (err as { detail?: unknown }).detail
+						: (err as { message?: unknown })?.message) ?? err
+		);
+		return /access denied|access required/i.test(msg);
+	}
+
 	async function loadWidgets() {
 		const token = getToken();
 		if (!token || !$activeOrgId) return;
@@ -67,14 +82,17 @@
 		// Parallel load — each widget resolves/fails independently.
 		await Promise.all(
 			dashboardWidgets.map(async (widget) => {
-				widgetStates[widget.id] = { loading: true, error: false, data: null };
+				widgetStates[widget.id] = { loading: true, error: false, unavailable: false, data: null };
 				widgetStates = widgetStates;
 				try {
 					const data = await widget.load(token, $activeOrgId, activeSubAccountId);
-					widgetStates[widget.id] = { loading: false, error: false, data };
+					widgetStates[widget.id] = { loading: false, error: false, unavailable: false, data };
 				} catch (error) {
-					console.error(`Failed to load dashboard widget "${widget.id}"`, error);
-					widgetStates[widget.id] = { loading: false, error: true, data: null };
+					const unavailable = isNotEnabled(error);
+					if (!unavailable) {
+						console.error(`Failed to load dashboard widget "${widget.id}"`, error);
+					}
+					widgetStates[widget.id] = { loading: false, error: !unavailable, unavailable, data: null };
 				}
 				widgetStates = widgetStates;
 			})
@@ -133,6 +151,11 @@
 					<div class="flex items-center gap-2 text-sm text-slate-400 py-2">
 						<div class="h-4 w-4 animate-spin rounded-full border-2 border-white/20 border-t-white"></div>
 						Loading...
+					</div>
+				{:else if widgetStates[widget.id]?.unavailable}
+					<div class="flex items-center gap-2 text-sm text-slate-500 py-2">
+						<MaterialIcon icon="lock" size={18} />
+						Not enabled for this workspace.
 					</div>
 				{:else if widgetStates[widget.id]?.error}
 					<div class="flex items-center gap-2 text-sm text-red-400 py-2">
