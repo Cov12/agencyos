@@ -311,6 +311,31 @@ export const getDashboardCortexHistory = async (
 	);
 };
 
+export type DriveSummary = {
+	quota: { usedBytes: string; quotaBytes: string };
+	fileCount: number;
+	folderCount: number;
+	recentFiles: {
+		id: string;
+		name: string;
+		size: string;
+		mimeType: string;
+		createdAt: string;
+	}[];
+};
+
+export const getDashboardDriveSummary = async (
+	token: string,
+	orgId: string,
+	subAccountId: string | null
+) => {
+	const params = buildWorkPipeDashboardQuery(orgId, subAccountId);
+	return apiCall<{ data: DriveSummary }>(
+		`${AGENCYOS_API_BASE}/dashboard/drive/summary?${params.toString()}`,
+		token
+	);
+};
+
 export const addOrgMember = async (
 	token: string,
 	orgId: string,
