@@ -22,6 +22,9 @@ import {
 	getDashboardWorkPipeContacts,
 	getDashboardWorkPipePipelines,
 	getDashboardWorkPipeStats,
+	getDashboardWorkPipeAppointments,
+	getDashboardWorkPipeInvoices,
+	getDashboardWorkPipeFunnels,
 	getOrganization,
 	getOrgSubAccounts
 } from '$lib/apis/agencyos';
@@ -32,6 +35,9 @@ import SubAccountsWidget from './widgets/SubAccountsWidget.svelte';
 import WorkPipeKpiWidget from './widgets/WorkPipeKpiWidget.svelte';
 import WorkPipePipelineBoardWidget from './widgets/WorkPipePipelineBoardWidget.svelte';
 import WorkPipeRecentContactsWidget from './widgets/WorkPipeRecentContactsWidget.svelte';
+import WorkPipeAppointmentsWidget from './widgets/WorkPipeAppointmentsWidget.svelte';
+import WorkPipeInvoicesWidget from './widgets/WorkPipeInvoicesWidget.svelte';
+import WorkPipeFunnelsWidget from './widgets/WorkPipeFunnelsWidget.svelte';
 
 export type DashboardWidget = {
 	/** Stable unique key — used for keyed rendering + per-widget state. */
@@ -112,6 +118,39 @@ export const dashboardWidgets: DashboardWidget[] = [
 			return (await getDashboardWorkPipeContacts(token, orgId, subAccountId, { limit: 6 })).data;
 		},
 		component: WorkPipeRecentContactsWidget
+	},
+	{
+		id: 'workpipe-appointments',
+		title: 'Upcoming appointments',
+		icon: 'event',
+		span: 1,
+		load: async (token, orgId, subAccountId) => {
+			if (!subAccountId) return WORKPIPE_SCOPE_EMPTY_STATE;
+			return (await getDashboardWorkPipeAppointments(token, orgId, subAccountId)).data;
+		},
+		component: WorkPipeAppointmentsWidget
+	},
+	{
+		id: 'workpipe-invoices',
+		title: 'Invoices',
+		icon: 'receipt_long',
+		span: 1,
+		load: async (token, orgId, subAccountId) => {
+			if (!subAccountId) return WORKPIPE_SCOPE_EMPTY_STATE;
+			return (await getDashboardWorkPipeInvoices(token, orgId, subAccountId)).data;
+		},
+		component: WorkPipeInvoicesWidget
+	},
+	{
+		id: 'workpipe-funnels',
+		title: 'Funnels',
+		icon: 'filter_alt',
+		span: 1,
+		load: async (token, orgId, subAccountId) => {
+			if (!subAccountId) return WORKPIPE_SCOPE_EMPTY_STATE;
+			return (await getDashboardWorkPipeFunnels(token, orgId, subAccountId)).data;
+		},
+		component: WorkPipeFunnelsWidget
 	},
 	{
 		id: 'cortex-recent-runs',

@@ -157,6 +157,34 @@ class WorkPipeDashboardClient:
             "total": int(total) if isinstance(total, (int, float)) else len(contacts),
         }
 
+    async def get_appointments(self, *, sub_account_id: str | None = None) -> dict[str, Any]:
+        payload = await self._get("/appointments", params=_subaccount_params(sub_account_id))
+        upcoming = payload.get("upcoming")
+        return {
+            "upcoming": upcoming if isinstance(upcoming, list) else [],
+            "upcomingCount": int(payload.get("upcomingCount") or 0),
+        }
+
+    async def get_invoices(self, *, sub_account_id: str | None = None) -> dict[str, Any]:
+        payload = await self._get("/invoices", params=_subaccount_params(sub_account_id))
+        recent = payload.get("recent")
+        return {
+            "count": int(payload.get("count") or 0),
+            "totalDue": float(payload.get("totalDue") or 0),
+            "dueSoonCount": int(payload.get("dueSoonCount") or 0),
+            "recent": recent if isinstance(recent, list) else [],
+        }
+
+    async def get_funnels(self, *, sub_account_id: str | None = None) -> dict[str, Any]:
+        payload = await self._get("/funnels", params=_subaccount_params(sub_account_id))
+        recent = payload.get("recent")
+        return {
+            "count": int(payload.get("count") or 0),
+            "publishedCount": int(payload.get("publishedCount") or 0),
+            "totalVisits": int(payload.get("totalVisits") or 0),
+            "recent": recent if isinstance(recent, list) else [],
+        }
+
 
 def _subaccount_params(sub_account_id: str | None) -> dict[str, Any]:
     cleaned = (sub_account_id or "").strip()

@@ -88,3 +88,45 @@ async def get_workpipe_contacts(
         }
     except WorkPipeDashboardError as exc:
         raise HTTPException(status_code=exc.status_code, detail=str(exc)) from exc
+
+
+@router.get("/appointments")
+async def get_workpipe_appointments(
+    request: Request,
+    org_id: str,
+    sub_account_id: str | None = Query(default=None, alias="subAccountId"),
+    db: Session = Depends(get_tenant_session),
+):
+    client = _build_client(request, db, org_id)
+    try:
+        return {"data": await client.get_appointments(sub_account_id=sub_account_id)}
+    except WorkPipeDashboardError as exc:
+        raise HTTPException(status_code=exc.status_code, detail=str(exc)) from exc
+
+
+@router.get("/invoices")
+async def get_workpipe_invoices(
+    request: Request,
+    org_id: str,
+    sub_account_id: str | None = Query(default=None, alias="subAccountId"),
+    db: Session = Depends(get_tenant_session),
+):
+    client = _build_client(request, db, org_id)
+    try:
+        return {"data": await client.get_invoices(sub_account_id=sub_account_id)}
+    except WorkPipeDashboardError as exc:
+        raise HTTPException(status_code=exc.status_code, detail=str(exc)) from exc
+
+
+@router.get("/funnels")
+async def get_workpipe_funnels(
+    request: Request,
+    org_id: str,
+    sub_account_id: str | None = Query(default=None, alias="subAccountId"),
+    db: Session = Depends(get_tenant_session),
+):
+    client = _build_client(request, db, org_id)
+    try:
+        return {"data": await client.get_funnels(sub_account_id=sub_account_id)}
+    except WorkPipeDashboardError as exc:
+        raise HTTPException(status_code=exc.status_code, detail=str(exc)) from exc

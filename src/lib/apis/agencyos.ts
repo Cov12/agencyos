@@ -298,6 +298,85 @@ export const getDashboardWorkPipeContacts = async (
 	);
 };
 
+export interface WorkPipeAppointment {
+	id: string;
+	title: string;
+	start: string;
+	end?: string | null;
+	allDay?: boolean;
+	category?: string | null;
+}
+
+export interface WorkPipeAppointmentsData {
+	upcoming: WorkPipeAppointment[];
+	upcomingCount: number;
+}
+
+export interface WorkPipeInvoiceRecent {
+	id: string;
+	name: string;
+	type?: string | null;
+	totalDue: number;
+	dueDate?: string | null;
+}
+
+export interface WorkPipeInvoicesData {
+	count: number;
+	totalDue: number;
+	dueSoonCount: number;
+	recent: WorkPipeInvoiceRecent[];
+}
+
+export interface WorkPipeFunnelRecent {
+	id: string;
+	name: string;
+	published: boolean;
+	visits: number;
+}
+
+export interface WorkPipeFunnelsData {
+	count: number;
+	publishedCount: number;
+	totalVisits: number;
+	recent: WorkPipeFunnelRecent[];
+}
+
+export const getDashboardWorkPipeAppointments = async (
+	token: string,
+	orgId: string,
+	subAccountId: string | null
+) => {
+	const params = buildWorkPipeDashboardQuery(orgId, subAccountId);
+	return apiCall<{ data: WorkPipeAppointmentsData }>(
+		`${AGENCYOS_API_BASE}/dashboard/workpipe/appointments?${params.toString()}`,
+		token
+	);
+};
+
+export const getDashboardWorkPipeInvoices = async (
+	token: string,
+	orgId: string,
+	subAccountId: string | null
+) => {
+	const params = buildWorkPipeDashboardQuery(orgId, subAccountId);
+	return apiCall<{ data: WorkPipeInvoicesData }>(
+		`${AGENCYOS_API_BASE}/dashboard/workpipe/invoices?${params.toString()}`,
+		token
+	);
+};
+
+export const getDashboardWorkPipeFunnels = async (
+	token: string,
+	orgId: string,
+	subAccountId: string | null
+) => {
+	const params = buildWorkPipeDashboardQuery(orgId, subAccountId);
+	return apiCall<{ data: WorkPipeFunnelsData }>(
+		`${AGENCYOS_API_BASE}/dashboard/workpipe/funnels?${params.toString()}`,
+		token
+	);
+};
+
 export const getDashboardCortexHistory = async (
 	token: string,
 	orgId: string,
