@@ -52,6 +52,7 @@ export interface WorkPipeLane {
 	name?: string | null;
 	order?: number | null;
 	Ticket?: WorkPipeTicket[];
+	Tickets?: WorkPipeTicket[];
 	tickets?: WorkPipeTicket[];
 }
 

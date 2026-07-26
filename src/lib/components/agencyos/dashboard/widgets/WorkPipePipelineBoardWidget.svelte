@@ -26,7 +26,10 @@
 	}
 
 	function ticketsFor(lane: WorkPipeLane): WorkPipeTicket[] {
-		return lane.tickets ?? lane.Ticket ?? [];
+		// WorkPipe's /pipelines embeds tickets under `Tickets` (capital plural), each with a
+		// numeric `value`. The earlier `tickets`/`Ticket` keys never matched, so per-lane value
+		// summed to $0 — count survived only via the stats byLane fallback.
+		return lane.tickets ?? lane.Tickets ?? lane.Ticket ?? [];
 	}
 
 	function laneTicketCount(lane: WorkPipeLane): number {
