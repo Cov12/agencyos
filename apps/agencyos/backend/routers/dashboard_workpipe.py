@@ -130,3 +130,18 @@ async def get_workpipe_funnels(
         return {"data": await client.get_funnels(sub_account_id=sub_account_id)}
     except WorkPipeDashboardError as exc:
         raise HTTPException(status_code=exc.status_code, detail=str(exc)) from exc
+
+
+@router.get("/trends")
+async def get_workpipe_trends(
+    request: Request,
+    org_id: str,
+    sub_account_id: str | None = Query(default=None, alias="subAccountId"),
+    days: int = Query(default=30, ge=1, le=90),
+    db: Session = Depends(get_tenant_session),
+):
+    client = _build_client(request, db, org_id)
+    try:
+        return {"data": await client.get_trends(sub_account_id=sub_account_id, days=days)}
+    except WorkPipeDashboardError as exc:
+        raise HTTPException(status_code=exc.status_code, detail=str(exc)) from exc
