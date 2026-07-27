@@ -185,6 +185,18 @@ class WorkPipeDashboardClient:
             "recent": recent if isinstance(recent, list) else [],
         }
 
+    async def get_trends(self, *, sub_account_id: str | None = None, days: int = 30) -> dict[str, Any]:
+        params = _subaccount_params(sub_account_id)
+        params["days"] = max(1, min(int(days), 90))
+        payload = await self._get("/trends", params=params)
+        series = payload.get("series")
+        totals = payload.get("totals")
+        return {
+            "days": int(payload.get("days") or 30),
+            "series": series if isinstance(series, list) else [],
+            "totals": totals if isinstance(totals, dict) else {},
+        }
+
 
 def _subaccount_params(sub_account_id: str | None) -> dict[str, Any]:
     cleaned = (sub_account_id or "").strip()

@@ -377,6 +377,33 @@ export const getDashboardWorkPipeFunnels = async (
 	);
 };
 
+export interface WorkPipeTrendPoint {
+	date: string;
+	contacts: number;
+	deals: number;
+	invoices: number;
+}
+
+export interface WorkPipeTrendsData {
+	days: number;
+	series: WorkPipeTrendPoint[];
+	totals: { contacts: number; deals: number; invoices: number };
+}
+
+export const getDashboardWorkPipeTrends = async (
+	token: string,
+	orgId: string,
+	subAccountId: string | null,
+	days = 30
+) => {
+	const params = buildWorkPipeDashboardQuery(orgId, subAccountId);
+	params.set('days', String(days));
+	return apiCall<{ data: WorkPipeTrendsData }>(
+		`${AGENCYOS_API_BASE}/dashboard/workpipe/trends?${params.toString()}`,
+		token
+	);
+};
+
 export const getDashboardCortexHistory = async (
 	token: string,
 	orgId: string,

@@ -25,6 +25,7 @@ import {
 	getDashboardWorkPipeAppointments,
 	getDashboardWorkPipeInvoices,
 	getDashboardWorkPipeFunnels,
+	getDashboardWorkPipeTrends,
 	getOrganization,
 	getOrgSubAccounts
 } from '$lib/apis/agencyos';
@@ -38,6 +39,7 @@ import WorkPipeRecentContactsWidget from './widgets/WorkPipeRecentContactsWidget
 import WorkPipeAppointmentsWidget from './widgets/WorkPipeAppointmentsWidget.svelte';
 import WorkPipeInvoicesWidget from './widgets/WorkPipeInvoicesWidget.svelte';
 import WorkPipeFunnelsWidget from './widgets/WorkPipeFunnelsWidget.svelte';
+import WorkPipeTrendsWidget from './widgets/WorkPipeTrendsWidget.svelte';
 
 export type DashboardWidget = {
 	/** Stable unique key — used for keyed rendering + per-widget state. */
@@ -151,6 +153,17 @@ export const dashboardWidgets: DashboardWidget[] = [
 			return (await getDashboardWorkPipeFunnels(token, orgId, subAccountId)).data;
 		},
 		component: WorkPipeFunnelsWidget
+	},
+	{
+		id: 'workpipe-trends',
+		title: 'Activity trend',
+		icon: 'show_chart',
+		span: 2,
+		load: async (token, orgId, subAccountId) => {
+			if (!subAccountId) return WORKPIPE_SCOPE_EMPTY_STATE;
+			return (await getDashboardWorkPipeTrends(token, orgId, subAccountId, 30)).data;
+		},
+		component: WorkPipeTrendsWidget
 	},
 	{
 		id: 'cortex-recent-runs',
