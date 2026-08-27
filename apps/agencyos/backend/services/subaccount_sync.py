@@ -26,6 +26,7 @@ Auth + base URL (verified against the codebase, not guessed):
 
 from __future__ import annotations
 
+import datetime
 import logging
 import os
 from typing import Optional
@@ -38,6 +39,13 @@ logger = logging.getLogger("agencyos.subaccount_sync")
 
 AGENCYOS_SUBACCOUNT_COOKIE = "agencyos_subaccount"
 BUSINESS_SCOPE_SENTINEL = "__business__"
+
+# Key inside AgencyOSOrganization.settings (a JSON column, so NO migration) holding the
+# ISO-8601 UTC timestamp of the last SUCCESSFUL Portal pull for this org (#B1). Its
+# presence is what lets a caller tell "Portal says this org genuinely has 0 sub-accounts"
+# from "we have never managed to reach Portal" — the two states the mirror otherwise
+# renders identically (an empty list), and which must NOT produce the same UI.
+SUBACCOUNTS_SYNCED_AT_KEY = "subaccountsSyncedAt"
 
 _DEFAULT_PORTAL_URL = "https://portal.wbit.app"
 _DEFAULT_TIMEOUT_S = 8.0
@@ -156,12 +164,25 @@ def sync_org_subaccounts(
 
     Returns the number of sub-accounts upserted (0 on any failure / empty list).
     Ids are stored VERBATIM as Portal's SubAccount.id. Never raises into the
-    request path — on error it rolls back and swallows, mirroring cortex_bridge."""
+    request path — on error it rolls back and swallows, mirroring cortex_bridge.
+
+    #B1: a None result (Portal unreachable / non-2xx / unparseable) and an empty
+    list (Portal answered: this org has no sub-accounts) are NOT the same thing,
+    even though both leave the mirror with 0 rows. Only the non-None case stamps
+    the org-level success marker, so a consumer can distinguish "genuinely zero"
+    (safe to nudge the user to create their first sub-account) from "we have no
+    idea, Portal was down" (must NOT nudge)."""
     if db is None or not internal_org_id or not token:
         return 0
 
     items = _fetch_subaccounts(token)
-    if not items:  # None (failure) or [] (no sub-accounts) -> no-op
+    if items is None:
+        # Portal failure: mirror untouched, NO success marker. syncOk stays as it was.
+        return 0
+    if not items:
+        # Valid empty answer — a known-good zero. Stamp the marker even though there
+        # is nothing to upsert; this is the whole point of splitting the branches.
+        _mark_sync_success(db, internal_org_id)
         return 0
 
     try:
@@ -235,6 +256,8 @@ def sync_org_subaccounts(
             upserted += 1
 
         db.commit()
+        # The pull succeeded end-to-end: record the known-good marker (#B1).
+        _mark_sync_success(db, internal_org_id)
         logger.info(
             "subaccount_sync: upserted %d sub-account(s) for org %s",
             upserted,
@@ -250,6 +273,98 @@ def sync_org_subaccounts(
         except Exception:
             pass
         return 0
+
+
+# --- sync-freshness marker (#B1) ---------------------------------------------
+
+def _utc_now_iso() -> str:
+    """ISO-8601 UTC with a trailing Z — the shape the frontend's Date parser expects."""
+    return (
+        datetime.datetime.now(datetime.timezone.utc)
+        .replace(microsecond=0)
+        .isoformat()
+        .replace("+00:00", "Z")
+    )
+
+
+def _mark_sync_success(
+    db: Optional[Session], internal_org_id: Optional[str]
+) -> Optional[str]:
+    """Stamp settings[SUBACCOUNTS_SYNCED_AT_KEY] on the org row. Returns the stamp, or
+    None if it could not be written.
+
+    Deliberately a JSON-column key rather than a new column: AgencyOSOrganization.settings
+    already exists (models/db.py:58), so this ships with NO migration. The JSON column is
+    not mutation-tracked, so we must assign a NEW dict — mutating org.settings in place
+    would never be flushed. Never raises; a failed stamp just leaves syncOk unknown."""
+    if db is None or not internal_org_id:
+        return None
+    try:
+        from ..models.db import AgencyOSOrganization, now_ms
+
+        org = (
+            db.query(AgencyOSOrganization)
+            .filter(AgencyOSOrganization.id == internal_org_id)
+            .one_or_none()
+        )
+        if org is None:
+            return None
+        stamp = _utc_now_iso()
+        current = org.settings if isinstance(org.settings, dict) else {}
+        org.settings = {**current, SUBACCOUNTS_SYNCED_AT_KEY: stamp}  # new dict, not in-place
+        org.updated_at = now_ms()
+        db.commit()
+        return stamp
+    except Exception as e:
+        logger.warning(
+            "subaccount_sync: could not stamp sync marker for org %s: %s",
+            internal_org_id, e,
+        )
+        try:
+            db.rollback()
+        except Exception:
+            pass
+        return None
+
+
+def get_sync_status(
+    db: Optional[Session], internal_org_id: Optional[str]
+) -> tuple[Optional[str], bool]:
+    """Read the org's mirror-freshness signal as (synced_at_iso, sync_ok).
+
+    sync_ok is True only when a successful pull has been recorded at some point —
+    i.e. the mirror is KNOWN-good, so an empty sub-account list means the org really
+    has none. False means unknown/never-succeeded (Portal outage, brand-new org whose
+    first sync failed): callers must treat an empty list as "no information", not as
+    "zero sub-accounts". Note this is last-known-good, not liveness: a sync that
+    succeeded and later starts failing keeps the older stamp."""
+    if db is None or not internal_org_id:
+        return None, False
+    try:
+        from ..models.db import AgencyOSOrganization
+
+        org = (
+            db.query(AgencyOSOrganization)
+            .filter(AgencyOSOrganization.id == internal_org_id)
+            .one_or_none()
+        )
+        settings = getattr(org, "settings", None) if org is not None else None
+        if not isinstance(settings, dict):
+            return None, False
+        stamp = settings.get(SUBACCOUNTS_SYNCED_AT_KEY)
+        if not isinstance(stamp, str) or not stamp:
+            return None, False
+        return stamp, True
+    except Exception as e:
+        logger.warning(
+            "subaccount_sync: sync-status read failed for org %s: %s",
+            internal_org_id, e,
+        )
+        try:
+            db.rollback()
+        except Exception:
+            pass
+        return None, False
 
 
 # --- throttled request-path entry --------------------------------------------
@@ -280,6 +395,34 @@ def maybe_sync(
         logger.warning(
             "subaccount_sync: maybe_sync failed for org %s: %s", internal_org_id, e
         )
+
+
+def force_sync(
+    db: Optional[Session],
+    internal_org_id: Optional[str],
+    portal_org_id: Optional[str],
+    token: Optional[str],
+) -> int:
+    """Pull NOW, ignoring the per-org back-off (#B2).
+
+    maybe_sync's 900s TTL is right for the ambient login/request stream but wrong for the
+    one moment we KNOW the roster just changed: the user returning from Portal having just
+    created a sub-account. Throttled, that return would show a stale mirror (no new
+    sub-account) for up to 15 minutes. So the return hop calls this instead.
+
+    The attempt is still recorded in the throttle map, so a forced pull also resets the
+    back-off window rather than leaving a stale timestamp that would allow an immediate
+    second pull. Never raises — the caller is the login path."""
+    if db is None or not internal_org_id or not token:
+        return 0
+    try:
+        _last_attempt_ms[internal_org_id] = _now_ms()
+        return sync_org_subaccounts(db, internal_org_id, portal_org_id, token)
+    except Exception as e:  # login must never 500 because Portal misbehaved
+        logger.warning(
+            "subaccount_sync: force_sync failed for org %s: %s", internal_org_id, e
+        )
+        return 0
 
 
 def _now_ms() -> int:

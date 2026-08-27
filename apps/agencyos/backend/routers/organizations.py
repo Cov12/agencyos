@@ -4,6 +4,8 @@ AgencyOS Organization Routes
 Multi-tenant org management — CRUD for orgs and members.
 """
 
+import os
+
 from fastapi import APIRouter, Depends, HTTPException, Request
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel
@@ -17,11 +19,32 @@ from ..services.organizations import OrganizationsService
 from ..services.subaccount_sync import (
     AGENCYOS_SUBACCOUNT_COOKIE,
     BUSINESS_SCOPE_SENTINEL,
+    get_sync_status,
     list_active_subaccounts,
     resolve_active_subaccount_id,
 )
 
 router = APIRouter(prefix="/api/agencyos/orgs", tags=["agencyos-organizations"])
+
+
+def _public_origin() -> Optional[str]:
+    """This deployment's canonical public origin, from AGENCYOS_PUBLIC_ORIGIN (#B4).
+
+    The frontend needs an EXACT origin to build the Portal returnTo URL that Portal's
+    redirect allowlist will accept. window.location.origin is not that: behind a proxy,
+    a preview host or a custom domain it can differ from the registered origin, and the
+    return hop then silently fails the allowlist. So the server states it.
+
+    Unset / blank / not an http(s) absolute origin -> None, and the frontend falls back
+    to window.location.origin. Trailing slash is normalized off so callers can
+    concatenate a path directly."""
+    raw = os.environ.get("AGENCYOS_PUBLIC_ORIGIN", "")
+    value = raw.strip().rstrip("/") if isinstance(raw, str) else ""
+    if not value:
+        return None
+    if not (value.startswith("https://") or value.startswith("http://")):
+        return None
+    return value
 
 
 class CreateOrgRequest(BaseModel):
@@ -138,6 +161,12 @@ async def list_org_subaccounts(
         db, org_id, request.cookies.get(AGENCYOS_SUBACCOUNT_COOKIE)
     )
     subaccounts = list_active_subaccounts(db, org_id)
+    # #B1: an empty subAccounts list is ambiguous on its own — it means either "this org
+    # genuinely has none" or "we never managed to reach Portal". syncOk disambiguates:
+    # True only once a pull has actually succeeded for this org. The onboarding nudge must
+    # fire on (syncOk && subAccounts == []) and NEVER on (!syncOk), so a Portal outage
+    # cannot tell an existing customer they have no sub-accounts.
+    synced_at, sync_ok = get_sync_status(db, org_id)
     return {
         "subAccounts": [
             {
@@ -149,6 +178,9 @@ async def list_org_subaccounts(
             for s in subaccounts
         ],
         "activeSubAccountId": active_subaccount_id,
+        "syncedAt": synced_at,
+        "syncOk": sync_ok,
+        "publicOrigin": _public_origin(),
     }
 
 

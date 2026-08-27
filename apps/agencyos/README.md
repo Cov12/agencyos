@@ -15,7 +15,9 @@ AgencyOS will accept Portal-issued JWTs (same pattern as WorkPipe and Drive). Th
 
 1. User signs in on `portal.wbit.app`
 2. Portal redirects to AgencyOS `/auth/callback?token=<jwt>`
-3. AgencyOS validates JWT, sets HTTP-only cookie (`wbit_token`)
+3. AgencyOS validates the JWT and sets the OpenWebUI session cookie `token`
+   (path `/`, **not** HTTP-only — the SvelteKit frontend reads it from JS).
+   See `backend/routers/auth_callback.py` (`portal_auth_callback`).
 4. Middleware checks cookie on every request
 
 AgencyOS has **zero knowledge of Clerk** or any auth provider. To swap providers, change Portal only.

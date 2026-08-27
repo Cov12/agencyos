@@ -12,7 +12,7 @@ import time
 import uuid
 
 import jwt as pyjwt
-from fastapi import APIRouter, HTTPException, Request, status
+from fastapi import APIRouter, HTTPException, Query, Request, status
 from fastapi.responses import RedirectResponse
 from sqlalchemy.orm import Session
 
@@ -31,11 +31,74 @@ logger = logging.getLogger("agencyos.auth_callback")
 
 router = APIRouter(prefix="/agencyos/auth", tags=["agencyos-auth"])
 
+# Where the callback lands when no (or no SAFE) return path was supplied.
+DEFAULT_RETURN_PATH = "/agencyos/"
+
+# Longest return path we will echo into a Location header. A relative path far past this
+# is not a real view, just header bloat.
+_MAX_RETURN_PATH_LEN = 2048
+
+
+def _safe_return_path(candidate: str | None) -> str:
+    """Open-redirect guard for the ?next= return path (#B3).
+
+    The callback is an unauthenticated-until-validated entry point whose whole job is to
+    redirect, so an attacker-supplied destination here is a textbook open redirect (and a
+    credible phishing hop: the victim arrives from a real Portal login). We therefore
+    ALLOW-LIST rather than blocklist — a value must look like a same-origin absolute path
+    and nothing else:
+
+      * non-empty after strip                       ('' / None / '   '  -> default)
+      * no C0 control chars or DEL                  (CR/LF => header splitting; TAB/NUL
+                                                     are also used to smuggle past naive
+                                                     scheme checks, e.g. a TAB inside
+                                                     'javascript:')
+      * no backslash anywhere                       (browsers normalize a backslash to
+                                                     '/', so a path of backslash+evil.com
+                                                     resolves as the HOST evil.com — the
+                                                     classic bypass)
+      * starts with exactly one '/'                 (rejects 'https://evil', 'javascript:',
+                                                     'evil.com', and every other scheme or
+                                                     host-relative form, since none of them
+                                                     begin with '/')
+      * does NOT start with '//'                    (protocol-relative '//evil.com' IS an
+                                                     absolute URL to a foreign origin)
+      * at most _MAX_RETURN_PATH_LEN chars
+
+    Anything that fails falls back to DEFAULT_RETURN_PATH — we never error the login on a
+    bad return path, we just ignore it. Note the value is NOT decoded before checking:
+    percent-encoded sequences ('/%2f%2fevil.com') stay in the path component per RFC 3986
+    and are not re-interpreted as a host by any browser, whereas decoding first would let
+    an attacker hide a real '//' behind '%2f%2f'."""
+    if not isinstance(candidate, str):
+        return DEFAULT_RETURN_PATH
+    value = candidate.strip()
+    if not value or len(value) > _MAX_RETURN_PATH_LEN:
+        return DEFAULT_RETURN_PATH
+    if any(ord(ch) < 0x20 or ord(ch) == 0x7F for ch in value):
+        return DEFAULT_RETURN_PATH
+    if "\\" in value:
+        return DEFAULT_RETURN_PATH
+    if not value.startswith("/") or value.startswith("//"):
+        return DEFAULT_RETURN_PATH
+    return value
+
+
+def _is_truthy_marker(value: str | None) -> bool:
+    """Query-param marker semantics: present and not an explicit falsy string."""
+    if not isinstance(value, str):
+        return False
+    return value.strip().lower() not in ("", "0", "false", "no", "off")
+
 
 @router.get("/callback")
 async def portal_auth_callback(
     request: Request,
     token: str = None,
+    # NB: named return_path, not `next` — the body calls the `next()` builtin
+    # (`next(get_session())`), which a parameter named `next` would shadow.
+    return_path: str = Query(default=None, alias="next"),
+    subaccount_created: str = Query(default=None, alias="subAccountCreated"),
 ):
     """
     Handle Portal SSO callback.
@@ -45,7 +108,18 @@ async def portal_auth_callback(
     2. Validate the Portal JWT
     3. Find or create OpenWebUI user
     4. Create OpenWebUI session and set cookie
-    5. Redirect to /agencyos/
+    5. Redirect to the (guarded) return path, default /agencyos/
+
+    Return-hop params (Phase 1.4 / first-sub-account onboarding):
+      * ?next=<relative path>       — where to land after login. Passed through
+        _safe_return_path, so only a same-origin absolute path survives; anything else
+        silently falls back to DEFAULT_RETURN_PATH. This lets the "create your first
+        sub-account" CTA bring the user back to the exact view (carrying, say,
+        ?newSubAccountId=... for the frontend to auto-select).
+      * ?subAccountCreated=1        — "the roster just changed": force a sub-account pull
+        that IGNORES the per-org back-off, so the just-created sub-account is present in
+        the mirror by the time the redirect lands. Without it, normal logins keep the
+        throttled maybe_sync behavior.
     """
     logger.info(f"[AuthCallback] Hit /agencyos/auth/callback, token present: {bool(token)}")
 
@@ -151,14 +225,30 @@ async def portal_auth_callback(
         # the old get_tenant_session hook never fired in prod and the mirror stayed empty
         # (dashboard showed 0 sub-accounts). maybe_sync is throttled per-org and never
         # raises, so an unreachable Portal just leaves the mirror as-is, never breaks login.
+        #
+        # Return-from-create hop (#B2): when the callback carries ?subAccountCreated=1 the
+        # roster demonstrably changed seconds ago, so the 900s back-off is exactly wrong —
+        # a throttled login would land the user on a mirror that does not yet contain the
+        # sub-account they just made. force_sync pulls immediately (and still records the
+        # attempt, so the back-off window restarts rather than allowing a second pull).
+        # Everything stays inside this never-raises try: a Portal failure here degrades to
+        # a stale mirror, never a broken login.
+        force_resync = _is_truthy_marker(subaccount_created)
         try:
             portal_cuid = payload.get("org_id")
             if portal_cuid:
                 org = OrganizationsService.get_org_by_portal_id(db, portal_cuid)
                 if org is not None:
-                    from ..services.subaccount_sync import maybe_sync
+                    from ..services import subaccount_sync
 
-                    maybe_sync(db, org.id, portal_cuid, token)
+                    if force_resync:
+                        logger.info(
+                            "Portal return-from-create: forcing sub-account resync for org %s",
+                            org.id,
+                        )
+                        subaccount_sync.force_sync(db, org.id, portal_cuid, token)
+                    else:
+                        subaccount_sync.maybe_sync(db, org.id, portal_cuid, token)
         except Exception as e:
             logger.warning(f"AgencyOS sub-account sync at login failed (non-fatal): {e}")
 
@@ -173,8 +263,11 @@ async def portal_auth_callback(
             expires_delta=expires_delta,
         )
 
-        # Create redirect response
-        response = RedirectResponse(url="/agencyos/", status_code=303)
+        # Create redirect response. #B3: the destination is attacker-controllable input,
+        # so it goes through the open-redirect guard; an unsafe value degrades to
+        # DEFAULT_RETURN_PATH instead of failing the login.
+        destination = _safe_return_path(return_path)
+        response = RedirectResponse(url=destination, status_code=303)
 
         # Set cookie with path="/" so it's available on all paths
         # This is critical because the callback is at /agencyos/auth/callback
@@ -194,7 +287,10 @@ async def portal_auth_callback(
             path="/",  # Critical: make cookie available on all paths
         )
 
-        logger.info(f"Portal auth success: user={user.id}, token set with path=/, redirecting to /agencyos/")
+        logger.info(
+            f"Portal auth success: user={user.id}, token set with path=/, "
+            f"redirecting to {destination}"
+        )
         return response
 
     finally:
