@@ -6,7 +6,7 @@
 		user,
 		mobile
 	} from '$lib/stores';
-	import { getOrganizationForUser, createOrganization } from '$lib/apis/agencyos';
+	import { getOrganizationForUser, createOrganization, ACTIVE_ORG_PARAM } from '$lib/apis/agencyos';
 	import { page } from '$app/stores';
 	import { goto } from '$app/navigation';
 	import AgencyNav from '$lib/components/agencyos/shared/AgencyNav.svelte';
@@ -57,6 +57,35 @@
 		return localStorage.getItem('portal_token');
 	}
 
+	/**
+	 * The login callback appends ?activeOrgId=<internal org uuid> when this login resolved
+	 * a launch org (#79). Read it from window.location rather than the page store: it is a
+	 * one-shot signal we strip immediately after use, and checkPortalAuth() above may have
+	 * already rewritten the URL via replaceState, which the page store does not observe.
+	 */
+	function readLaunchOrgId(): string | null {
+		if (typeof window === 'undefined') return null;
+		try {
+			return new URLSearchParams(window.location.search).get(ACTIVE_ORG_PARAM);
+		} catch (error) {
+			console.error('Failed to read launch organization param', error);
+			return null;
+		}
+	}
+
+	/** Drop the one-shot launch signal so a refresh cannot re-apply a now-stale choice. */
+	function stripLaunchOrgParam() {
+		if (typeof window === 'undefined' || typeof history === 'undefined') return;
+		try {
+			const url = new URL(window.location.href);
+			if (!url.searchParams.has(ACTIVE_ORG_PARAM)) return;
+			url.searchParams.delete(ACTIVE_ORG_PARAM);
+			history.replaceState(history.state, '', `${url.pathname}${url.search}${url.hash}`);
+		} catch (error) {
+			console.error('Failed to clear launch organization param', error);
+		}
+	}
+
 	function redirectToPortal() {
 		const returnUrl = encodeURIComponent(window.location.href);
 		window.location.href = `${PORTAL_LOGIN_URL}?redirect=${returnUrl}`;
@@ -84,8 +113,12 @@
 			return;
 		}
 
+		// Read the launch signal BEFORE resolving, strip it after — order matters: the
+		// resolver needs the param, and stripping first would lose it on a slow fetch.
+		const launchOrgId = readLaunchOrgId();
+
 		try {
-			const organization = await getOrganizationForUser(token);
+			const organization = await getOrganizationForUser(token, launchOrgId);
 			if (organization) {
 				activeOrg.set(organization);
 			} else {
@@ -103,6 +136,7 @@
 		} catch (error) {
 			console.error('Failed to resolve organization context', error);
 		} finally {
+			stripLaunchOrgParam();
 			orgLoading = false;
 		}
 	});

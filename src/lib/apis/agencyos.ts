@@ -208,11 +208,52 @@ export const createOrganization = async (
 	);
 };
 
-export const getOrganizationForUser = async (token: string) => {
+/**
+ * Query param the login callback appends to the post-login redirect, carrying the
+ * INTERNAL AgencyOS org uuid this login launched with (#79). Membership is already
+ * ensured server-side; the frontend still reconciles it against the member-org list.
+ */
+export const ACTIVE_ORG_PARAM = 'activeOrgId';
+
+/**
+ * Pure precedence for the active org. Exported for unit testing — no DOM, no network.
+ *
+ * (a) the launch org, when this login carried one AND the user is a member of it;
+ * (b) else the stored org, when it is still in the member list — a stored id left over
+ *     from a DIFFERENT account/session in the same browser must never be reused, or
+ *     every scoped call 403s;
+ * (c) else the first member org.
+ *
+ * Returns null for an empty list (caller clears the stored id).
+ */
+export const chooseActiveOrg = (
+	orgs: Organization[] | null | undefined,
+	launchOrgId?: string | null,
+	storedOrgId?: string | null
+): Organization | null => {
+	if (!orgs || orgs.length === 0) {
+		return null;
+	}
+	return (
+		(launchOrgId && orgs.find((o) => o.id === launchOrgId)) ||
+		(storedOrgId && orgs.find((o) => o.id === storedOrgId)) ||
+		orgs[0]
+	);
+};
+
+/**
+ * Resolve the org this session should act as.
+ *
+ * `launchOrgId` is the `?activeOrgId=` signal from the login redirect, passed in by the
+ * caller — this module stays DOM-free and never reads window.location itself. When it
+ * names an org the user belongs to it wins over the stored choice, so a multi-org user
+ * lands on the org they launched with instead of a stale localStorage pick. The chosen
+ * id is written back so the launch choice sticks across subsequent navigations.
+ */
+export const getOrganizationForUser = async (token: string, launchOrgId?: string | null) => {
 	// The active org MUST be one the authenticated user belongs to. Fetch the user's
-	// orgs (server-side, membership-scoped) and reconcile any stored id against that
-	// list — a stored id left over from a DIFFERENT account/session in the same browser
-	// must never be reused, or every scoped call 403s. Fall back to the first member org.
+	// orgs (server-side, membership-scoped) and reconcile both the launch id and any
+	// stored id against that list.
 	try {
 		const orgs = await listOrganizations(token);
 		const hasLS = typeof localStorage !== 'undefined';
@@ -221,7 +262,11 @@ export const getOrganizationForUser = async (token: string) => {
 			return null;
 		}
 		const storedOrgId = hasLS ? localStorage.getItem('agencyos-org-id') : null;
-		const chosen = (storedOrgId && orgs.find((o) => o.id === storedOrgId)) || orgs[0];
+		const chosen = chooseActiveOrg(orgs, launchOrgId, storedOrgId);
+		if (!chosen) {
+			if (hasLS) localStorage.removeItem('agencyos-org-id');
+			return null;
+		}
 		if (hasLS) localStorage.setItem('agencyos-org-id', chosen.id);
 		return chosen;
 	} catch {
