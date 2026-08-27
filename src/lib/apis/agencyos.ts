@@ -215,6 +215,40 @@ export const createOrganization = async (
  */
 export const ACTIVE_ORG_PARAM = 'activeOrgId';
 
+/** localStorage key holding the org this browser last acted as. */
+export const ORG_STORAGE_KEY = 'agencyos-org-id';
+
+/**
+ * Write (or clear) the remembered org. Guarded so SSR and the unit tests, which run
+ * without a DOM, can call the resolvers without stubbing storage.
+ */
+export const persistActiveOrgId = (orgId: string | null) => {
+	if (typeof localStorage === 'undefined') return;
+	if (orgId) {
+		localStorage.setItem(ORG_STORAGE_KEY, orgId);
+	} else {
+		localStorage.removeItem(ORG_STORAGE_KEY);
+	}
+};
+
+/**
+ * A switcher is only meaningful when there is somewhere to switch to. Single-org users
+ * (the common case) get no control at all rather than a dropdown with one entry.
+ */
+export const shouldShowOrgSwitcher = (orgs: Organization[] | null | undefined): boolean =>
+	(orgs?.length ?? 0) > 1;
+
+/**
+ * Display order for the switcher only — never for resolution. `chooseActiveOrg` still
+ * falls back to the server's first org, so sorting here must not mutate the input.
+ */
+export const sortOrgsForSwitcher = (orgs: Organization[] | null | undefined): Organization[] =>
+	[...(orgs ?? [])].sort((a, b) =>
+		(a.name || a.slug || '').localeCompare(b.name || b.slug || '', undefined, {
+			sensitivity: 'base'
+		})
+	);
+
 /**
  * Pure precedence for the active org. Exported for unit testing — no DOM, no network.
  *
@@ -258,16 +292,16 @@ export const getOrganizationForUser = async (token: string, launchOrgId?: string
 		const orgs = await listOrganizations(token);
 		const hasLS = typeof localStorage !== 'undefined';
 		if (!orgs || orgs.length === 0) {
-			if (hasLS) localStorage.removeItem('agencyos-org-id');
+			persistActiveOrgId(null);
 			return null;
 		}
-		const storedOrgId = hasLS ? localStorage.getItem('agencyos-org-id') : null;
+		const storedOrgId = hasLS ? localStorage.getItem(ORG_STORAGE_KEY) : null;
 		const chosen = chooseActiveOrg(orgs, launchOrgId, storedOrgId);
 		if (!chosen) {
-			if (hasLS) localStorage.removeItem('agencyos-org-id');
+			persistActiveOrgId(null);
 			return null;
 		}
-		if (hasLS) localStorage.setItem('agencyos-org-id', chosen.id);
+		persistActiveOrgId(chosen.id);
 		return chosen;
 	} catch {
 		return null;
