@@ -12,8 +12,11 @@
 	import AgencyNav from '$lib/components/agencyos/shared/AgencyNav.svelte';
 	import { agencyNavCollapsed, agencyNavMobile, activeOrg, unreadCount } from '$lib/stores/agencyos';
 	import NotificationCenter from '$lib/components/agencyos/NotificationCenter.svelte';
+	import OrgSwitcher from '$lib/components/agencyos/OrgSwitcher.svelte';
 
 	let notificationPanelOpen = false;
+	/** Resolved session token, hoisted out of onMount so the org switcher can reuse it. */
+	let authToken: string | undefined;
 
 	const i18n = getContext('i18n');
 
@@ -107,6 +110,7 @@
 		const token = portalToken || (($user as { token?: string } | undefined)?.token ?? localStorage.token) as
 			| string
 			| undefined;
+		authToken = token;
 
 		if (!token) {
 			orgLoading = false;
@@ -208,6 +212,8 @@
 					</div>
 
 					<div class="ml-auto flex items-center gap-2">
+						<!-- Multi-org users only; hides itself otherwise. -->
+						<OrgSwitcher token={authToken} />
 						<button
 							class="relative p-2 rounded-lg transition-all {notificationPanelOpen ? 'bg-white/10 text-white' : 'text-slate-400 hover:bg-white/10 hover:text-white'}"
 							on:click={() => (notificationPanelOpen = !notificationPanelOpen)}
