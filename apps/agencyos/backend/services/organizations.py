@@ -182,6 +182,110 @@ class OrganizationsService:
         return member
 
     @staticmethod
+    def _clean_str(value) -> str:
+        """Normalize an untrusted JWT claim to a stripped str ('' for anything else)."""
+        return value.strip() if isinstance(value, str) else ""
+
+    @staticmethod
+    def _slug_is_placeholder(org: AgencyOSOrganization) -> bool:
+        """True when this org's slug was never really chosen — so it is safe to replace.
+
+        Two ways a placeholder is born:
+          * 'default' — the org the frontend auto-creates (+layout.svelte) before any
+            Portal binding exists, alongside the name 'My Organization';
+          * an id echoed as a slug — provision_from_portal's create-time fallback is the
+            Portal org id itself (see the CREATE branch below), and locally created rows
+            can carry their own generate_id(). Portal ids may be CUID **or** UUID, so we
+            compare against the stored values rather than sniffing the shape.
+        """
+        slug = org.slug
+        if not slug:
+            return True
+        return slug in ("default", org.portal_org_id, org.id)
+
+    @staticmethod
+    def _refresh_org_identity(
+        db: Session, org: AgencyOSOrganization, payload: dict
+    ) -> bool:
+        """Refresh an already-BOUND org's display name/slug from the Portal token
+        (agencyos#79 follow-up).
+
+        The find-or-create in provision_from_portal only wrote name/slug on the CREATE
+        branch, so an org the frontend auto-created as 'My Organization'/'default' and
+        that was LATER bound to a real Portal org kept the placeholder identity forever.
+        Org identity is already proven by the caller's portal_org_id lookup; this
+        refreshes ONLY the two display columns.
+
+        Rules:
+          * name — adopt any non-empty incoming name that differs (display-only, no
+            constraints, so no guard beyond "not blank").
+          * slug — adopt ONLY when all three hold:
+              (a) the incoming slug is real: non-empty, not 'default', and not the org
+                  id echoed back as a slug;
+              (b) the CURRENT slug is a placeholder (_slug_is_placeholder) — a slug
+                  someone deliberately chose is never renamed out from under routing;
+              (c) no OTHER row already holds it. slug is UNIQUE (models/db.py:50) and an
+                  IntegrityError here would roll back the whole login-path provisioning.
+          * portal_org_id is NEVER touched here — the binding is assigned at create /
+            out-of-band backfill (stamp_portal_org_id), never on a data path.
+
+        Commits at most once, and bumps updated_at only when something actually changed
+        (so a repeat login of unchanged claims writes nothing). Never raises: any failure
+        rolls back just this refresh and login continues — same contract as the caller.
+        """
+        try:
+            changed = False
+
+            incoming_name = OrganizationsService._clean_str(payload.get("org_name"))
+            if incoming_name and incoming_name != org.name:
+                org.name = incoming_name
+                changed = True
+
+            incoming_slug = OrganizationsService._clean_str(payload.get("org_slug"))
+            portal_org_id = OrganizationsService._clean_str(payload.get("org_id"))
+            slug_is_real = (
+                bool(incoming_slug)
+                and incoming_slug != "default"
+                and incoming_slug != portal_org_id
+            )
+            if slug_is_real and incoming_slug != org.slug:
+                if not OrganizationsService._slug_is_placeholder(org):
+                    log.debug(
+                        "org %s keeps slug %r: not a placeholder (incoming %r)",
+                        org.id, org.slug, incoming_slug,
+                    )
+                else:
+                    holder = OrganizationsService.get_org_by_slug(db, incoming_slug)
+                    if holder is not None and holder.id != org.id:
+                        log.info(
+                            "org %s keeps slug %r: incoming %r already held by org %s",
+                            org.id, org.slug, incoming_slug, holder.id,
+                        )
+                    else:
+                        org.slug = incoming_slug
+                        changed = True
+
+            if changed:
+                org.updated_at = now_ms()
+                db.commit()
+                db.refresh(org)
+                log.info(
+                    "Refreshed org %s identity from portal: name=%r slug=%r",
+                    org.id, org.name, org.slug,
+                )
+            return changed
+        except Exception as e:  # a display refresh must never break login
+            log.warning(
+                f"Org identity refresh failed for org {getattr(org, 'id', None)} "
+                f"(non-fatal): {e}"
+            )
+            try:
+                db.rollback()
+            except Exception:
+                pass
+            return False
+
+    @staticmethod
     def provision_from_portal(db: Session, user_id: str, payload: dict) -> None:
         """Persist AgencyOS org membership + per-org app_access from a VALIDATED Portal
         JWT payload, keyed on the OWUI user.id (#45 / agencyos#50). Idempotent — safe on
@@ -208,6 +312,11 @@ class OrganizationsService:
                     slug=org_slug,
                     portal_org_id=portal_org_cuid,
                 )
+            else:
+                # Already bound to this Portal org: keep the DISPLAY identity fresh, so a
+                # placeholder org ('My Organization'/'default') that was bound to a real
+                # Portal org later stops rendering as the placeholder (agencyos#79).
+                OrganizationsService._refresh_org_identity(db, org, payload)
             OrganizationsService.upsert_member(
                 db,
                 org_id=org.id,

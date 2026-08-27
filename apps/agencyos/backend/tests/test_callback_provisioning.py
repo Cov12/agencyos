@@ -95,6 +95,200 @@ def test_provision_reuses_existing_org(db):
     assert orgs[0].app_access == ["AGENCYOS", "DRIVE", "WORKPIPE"]
 
 
+# ------------------- #79 follow-up: refresh a bound org's name/slug from the token
+#
+# The find-or-create above only wrote name/slug on the CREATE branch, so an org the
+# frontend auto-created as 'My Organization'/'default' and that was LATER bound to a
+# real Portal org kept the placeholder identity on every subsequent login. These pin
+# the refresh AND its guards (slug is UNIQUE — an unguarded update would raise and roll
+# back the whole login-path provisioning).
+
+# A distinct second Portal org, mirroring test_org_portal_stamp's _SECOND_CUID.
+OTHER_CUID = "clsecondorg0000abcd1234wxyz"
+# Portal org ids may be UUID-shaped too — the guards must not assume CUID.
+UUID_ORG_ID = "3f1a7c62-9d84-4a11-b0c3-2f5e6a7b8c90"
+
+WBIT = {"org_name": "WBIT", "org_slug": "wbit"}
+
+
+def _seed(db, **over):
+    """Seed the bound-but-placeholder org: name/slug the frontend auto-creates."""
+    fields = dict(
+        id="org-x",
+        name="My Organization",
+        slug="default",
+        portal_org_id=CUID,
+        app_access=[],
+        updated_at=111,
+    )
+    fields.update(over)
+    org = AgencyOSOrganization(**fields)
+    db.add(org)
+    db.commit()
+    return org
+
+
+def _assert_provisioned(db, org_id):
+    """Regression guard: membership + app_access are applied whatever the refresh did."""
+    mem = db.query(AgencyOSMember).filter_by(org_id=org_id, user_id=UID).all()
+    assert len(mem) == 1 and mem[0].role == "owner"
+    assert OrganizationsService.get_org_by_id(db, org_id).app_access == [
+        "AGENCYOS", "DRIVE", "WORKPIPE"
+    ]
+
+
+def test_provision_refreshes_placeholder_name_and_slug(db):
+    """The bug: 'My Organization' / 'default' bound to a real Portal org stayed that way."""
+    _seed(db)
+
+    OrganizationsService.provision_from_portal(db, UID, _payload(**WBIT))
+
+    org = OrganizationsService.get_org_by_portal_id(db, CUID)
+    assert (org.name, org.slug) == ("WBIT", "wbit")
+    assert org.portal_org_id == CUID  # binding never touched by the refresh
+    assert db.query(AgencyOSOrganization).count() == 1  # refreshed in place, not re-created
+    _assert_provisioned(db, org.id)
+
+
+def test_provision_adopts_slug_when_slug_is_the_portal_org_id(db):
+    """create_org's fallback slug IS the Portal org id — also a placeholder."""
+    _seed(db, slug=CUID)
+
+    OrganizationsService.provision_from_portal(db, UID, _payload(**WBIT))
+
+    org = OrganizationsService.get_org_by_portal_id(db, CUID)
+    assert org.slug == "wbit"
+    assert org.portal_org_id == CUID
+
+
+def test_provision_adopts_slug_when_slug_is_the_internal_id(db):
+    _seed(db, id="org-selfslug", slug="org-selfslug")
+
+    OrganizationsService.provision_from_portal(db, UID, _payload(**WBIT))
+
+    org = OrganizationsService.get_org_by_portal_id(db, CUID)
+    assert org.slug == "wbit"
+    assert org.portal_org_id == CUID
+
+
+def test_provision_refreshes_uuid_shaped_portal_org(db):
+    """Portal ids can be UUIDs; the placeholder guards compare values, not shapes."""
+    _seed(db, id="org-uuid", slug=UUID_ORG_ID, portal_org_id=UUID_ORG_ID)
+
+    OrganizationsService.provision_from_portal(
+        db, UID, _payload(org_id=UUID_ORG_ID, **WBIT)
+    )
+
+    org = OrganizationsService.get_org_by_portal_id(db, UUID_ORG_ID)
+    assert (org.name, org.slug) == ("WBIT", "wbit")
+    assert org.portal_org_id == UUID_ORG_ID
+
+
+def test_identity_refresh_is_a_noop_when_nothing_changed(db):
+    """A second identical login compares equal and writes NOTHING — not even updated_at.
+
+    Asserted on the refresh helper directly: provision_from_portal's set_org_app_access
+    bumps updated_at unconditionally, which would mask a spurious write here.
+    """
+    org = _seed(db, name="WBIT", slug="wbit", updated_at=111)
+
+    changed = OrganizationsService._refresh_org_identity(db, org, _payload(**WBIT))
+
+    assert changed is False
+    fresh = OrganizationsService.get_org_by_id(db, "org-x")
+    assert (fresh.name, fresh.slug, fresh.updated_at) == ("WBIT", "wbit", 111)
+    assert fresh.portal_org_id == CUID
+
+
+def test_provision_slug_collision_keeps_existing_slug(db):
+    """slug is UNIQUE: when another row already holds the incoming slug we must keep
+    ours, log, and let provisioning finish — never raise into the login path."""
+    _seed(db)
+    db.add(
+        AgencyOSOrganization(
+            id="org-other", name="Someone Else", slug="wbit",
+            portal_org_id=OTHER_CUID, app_access=[],
+        )
+    )
+    db.commit()
+
+    OrganizationsService.provision_from_portal(db, UID, _payload(**WBIT))
+
+    org = OrganizationsService.get_org_by_portal_id(db, CUID)
+    assert org.slug == "default"        # kept — no IntegrityError, no theft
+    assert org.name == "WBIT"           # display name still refreshed
+    assert org.portal_org_id == CUID
+    # The colliding row is untouched, and provisioning completed regardless.
+    other = OrganizationsService.get_org_by_id(db, "org-other")
+    assert (other.slug, other.name, other.portal_org_id) == (
+        "wbit", "Someone Else", OTHER_CUID
+    )
+    _assert_provisioned(db, org.id)
+
+
+def test_provision_does_not_adopt_placeholder_incoming_slug(db):
+    """An incoming 'default' / id-as-slug is itself a placeholder — never adopted."""
+    for incoming in ("default", CUID, "", "   ", None):
+        db.query(AgencyOSMember).delete()
+        db.query(AgencyOSOrganization).delete()
+        db.commit()
+        _seed(db, slug="org-x-slug")
+
+        OrganizationsService.provision_from_portal(
+            db, UID, _payload(org_name="WBIT", org_slug=incoming)
+        )
+
+        org = OrganizationsService.get_org_by_portal_id(db, CUID)
+        assert org.slug == "org-x-slug", f"adopted placeholder slug {incoming!r}"
+        assert org.portal_org_id == CUID
+        _assert_provisioned(db, org.id)
+
+
+def test_provision_never_renames_a_real_slug(db):
+    """A deliberately chosen slug is routing-visible — a token must not rename it."""
+    _seed(db, name="Acme", slug="acme")
+
+    OrganizationsService.provision_from_portal(db, UID, _payload(**WBIT))
+
+    org = OrganizationsService.get_org_by_portal_id(db, CUID)
+    assert org.slug == "acme"   # not a placeholder -> untouched
+    assert org.name == "WBIT"   # name is display-only -> still refreshed
+    assert org.portal_org_id == CUID
+    _assert_provisioned(db, org.id)
+
+
+def test_provision_keeps_name_when_incoming_is_blank(db):
+    _seed(db, name="Acme", slug="acme")
+
+    OrganizationsService.provision_from_portal(
+        db, UID, _payload(org_name="", org_slug="acme")
+    )
+
+    org = OrganizationsService.get_org_by_portal_id(db, CUID)
+    assert org.name == "Acme"
+    assert org.portal_org_id == CUID
+
+
+def test_identity_refresh_failure_does_not_break_provisioning(db, monkeypatch):
+    """Never-raises contract: even if the refresh blows up, login-path provisioning
+    (membership + app_access) still completes."""
+    _seed(db)
+
+    def boom(_db, slug):
+        raise RuntimeError("slug lookup exploded")
+
+    monkeypatch.setattr(
+        OrganizationsService, "get_org_by_slug", staticmethod(boom)
+    )
+
+    OrganizationsService.provision_from_portal(db, UID, _payload(**WBIT))
+
+    org = OrganizationsService.get_org_by_portal_id(db, CUID)
+    assert org.slug == "default"
+    assert org.portal_org_id == CUID
+    _assert_provisioned(db, org.id)
+
+
 def test_provision_idempotent_updates_role_no_dup(db):
     OrganizationsService.provision_from_portal(db, UID, _payload(role="MEMBER"))
     OrganizationsService.provision_from_portal(db, UID, _payload(role="OWNER"))
