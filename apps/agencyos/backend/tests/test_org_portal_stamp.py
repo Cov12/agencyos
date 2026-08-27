@@ -135,6 +135,21 @@ def test_stamp_reconcile_leaves_default_org_untouched(db):
     assert OrganizationsService.get_org_by_id(db, org.id).portal_org_id is None
 
 
+def test_stamp_reconcile_unaffected_by_slug_refresh(db):
+    """#79 follow-up non-interference: the identity refresh may rename a BOUND org's
+    slug away from 'default'. That cannot re-open this backfill, because the non-null
+    portal_org_id check short-circuits BEFORE the slug check (organizations.py:86) —
+    so a renamed bound row is still refused, and its binding is never overwritten."""
+    org = OrganizationsService.create_org(
+        db, name="My Organization", slug="default", portal_org_id=_WBIT_CUID
+    )
+    org.slug = "wbit"  # what the refresh does to a bound placeholder
+    db.commit()
+
+    assert OrganizationsService.stamp_portal_org_id(db, org.id, _SECOND_CUID) is False
+    assert OrganizationsService.get_org_by_id(db, org.id).portal_org_id == _WBIT_CUID
+
+
 def test_stamp_reconcile_unknown_row_is_noop(db):
     assert OrganizationsService.stamp_portal_org_id(db, "does-not-exist", _SECOND_CUID) is False
 
