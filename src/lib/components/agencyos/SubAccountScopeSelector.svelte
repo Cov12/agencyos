@@ -1,12 +1,16 @@
 <script lang="ts">
 	import { createEventDispatcher } from 'svelte';
-	import type { OrgSubAccount } from '$lib/apis/agencyos';
+	import { buildAddSubAccountUrl, type OrgSubAccount } from '$lib/apis/agencyos';
 	import MaterialIcon from '$lib/components/agencyos/shared/MaterialIcon.svelte';
 
 	export let subAccounts: OrgSubAccount[] = [];
 	export let activeSubAccountId: string | null = null;
 	export let loading = false;
 	export let disabled = false;
+	// Server-stated canonical origin for the Portal return hop. Optional: when a host does
+	// not pass it we still render the CTA and fall back to window.location.origin, which is
+	// best-effort — Portal's redirect allowlist matches the registered origin exactly.
+	export let publicOrigin: string | null = null;
 
 	const dispatch = createEventDispatcher<{ select: { subAccountId: string | null } }>();
 
@@ -20,6 +24,14 @@
 	function select(subAccountId: string | null) {
 		open = false;
 		dispatch('select', { subAccountId });
+	}
+
+	// Same tab on purpose: the return hop re-authenticates through /agencyos/auth/callback,
+	// which sets the session cookie on a 303. A new tab would strand the opener on a stale
+	// session with no sub-account selected.
+	function addFirstSubAccount() {
+		if (typeof window === 'undefined') return;
+		window.location.assign(buildAddSubAccountUrl(publicOrigin));
 	}
 </script>
 
@@ -79,5 +91,20 @@
 				{/each}
 			</div>
 		{/if}
+	</div>
+{:else}
+	<!-- Zero sub-accounts: the scope picker has nothing to pick, so offer the first one. -->
+	<div class="relative pointer-events-auto">
+		<button
+			type="button"
+			class="bg-[#1c1c21]/80 backdrop-blur-md rounded-xl p-1 inline-flex items-center shadow-lg ring-1 ring-white/10"
+			on:click={addFirstSubAccount}
+			disabled={disabled}
+		>
+			<span class="px-3 sm:px-4 py-2 rounded-lg text-xs sm:text-sm font-medium transition-all flex items-center gap-1.5 sm:gap-2 whitespace-nowrap min-h-[40px] text-white/80 hover:text-white disabled:opacity-50">
+				<MaterialIcon icon="add_business" size={18} class="text-[#6961ff]" />
+				<span>Add your first business</span>
+			</span>
+		</button>
 	</div>
 {/if}

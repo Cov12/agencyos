@@ -26,6 +26,20 @@ export interface OrgSubAccount {
 	status: string | null;
 }
 
+export interface OrgSubAccountsResponse {
+	subAccounts: OrgSubAccount[];
+	activeSubAccountId: string | null;
+	// Phase 1.4 onboarding fields. `syncOk` disambiguates an empty subAccounts list — it is
+	// true only once a Portal pull has actually succeeded for this org, so a first-business
+	// affordance can fire on "genuinely none" and stay silent during a Portal outage.
+	// `publicOrigin` is this deployment's canonical origin (AGENCYOS_PUBLIC_ORIGIN), which
+	// the Portal return hop must match exactly; window.location.origin can differ behind a
+	// proxy, a preview host or a custom domain.
+	syncedAt?: string | null;
+	syncOk?: boolean;
+	publicOrigin?: string | null;
+}
+
 export interface WorkPipeStats {
 	contacts: {
 		total: number;
@@ -227,10 +241,35 @@ export const getOrgMembers = async (token: string, orgId: string) => {
 };
 
 export const getOrgSubAccounts = async (token: string, orgId: string) => {
-	return apiCall<{ subAccounts: OrgSubAccount[]; activeSubAccountId: string | null }>(
-		`${AGENCYOS_API_BASE}/orgs/${orgId}/subaccounts`,
-		token
-	);
+	return apiCall<OrgSubAccountsResponse>(`${AGENCYOS_API_BASE}/orgs/${orgId}/subaccounts`, token);
+};
+
+// ─── First sub-account onboarding (Phase 1.4) ─────────────────
+
+/** Portal page that creates a sub-account, and the marker params of the return hop. */
+const PORTAL_NEW_SUBACCOUNT_URL = 'https://portal.wbit.app/settings/subaccounts/new';
+export const SUBACCOUNT_CREATED_PARAM = 'subAccountCreated';
+export const NEW_SUBACCOUNT_ID_PARAM = 'newSubAccountId';
+
+/**
+ * Deep link to Portal's "create sub-account" page, carrying the full return hop back here.
+ *
+ * Portal redirects to `returnTo` with a fresh Portal JWT, which our auth callback exchanges
+ * for an OWUI session cookie before 303-ing to `next`. `subAccountCreated=1` on the callback
+ * makes it force-sync the sub-account mirror (bypassing the per-org back-off), so the
+ * just-created sub-account is present by the time the UI reloads; the copy of it on `next`
+ * is what the UI reads to auto-select the new scope.
+ *
+ * `publicOrigin` comes from the server and is preferred, because Portal's redirect allowlist
+ * matches on an exact origin. Falling back to window.location.origin is best-effort: on a
+ * host that is not the registered origin the hop will simply be refused by Portal.
+ */
+export const buildAddSubAccountUrl = (publicOrigin?: string | null): string => {
+	const origin =
+		publicOrigin || (typeof window !== 'undefined' ? window.location.origin : '');
+	const next = `/agencyos/?${SUBACCOUNT_CREATED_PARAM}=1`;
+	const returnTo = `${origin}/agencyos/auth/callback?${SUBACCOUNT_CREATED_PARAM}=1&next=${encodeURIComponent(next)}`;
+	return `${PORTAL_NEW_SUBACCOUNT_URL}?returnTo=${encodeURIComponent(returnTo)}`;
 };
 
 export const selectOrgSubAccount = async (

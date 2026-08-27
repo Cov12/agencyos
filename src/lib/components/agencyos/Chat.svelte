@@ -14,10 +14,13 @@
 		getEmployeeTabs,
 		getOrgSubAccounts,
 		selectOrgSubAccount,
+		NEW_SUBACCOUNT_ID_PARAM,
+		SUBACCOUNT_CREATED_PARAM,
 		type Proposal as ApiProposal,
 		type EmployeeTab,
 		type OrgSubAccount
 	} from '$lib/apis/agencyos';
+	import FirstBusinessNudge from '$lib/components/agencyos/FirstBusinessNudge.svelte';
 	import GlassPanel from '$lib/components/agencyos/shared/GlassPanel.svelte';
 	import MaterialIcon from '$lib/components/agencyos/shared/MaterialIcon.svelte';
 	import SubAccountScopeSelector from '$lib/components/agencyos/SubAccountScopeSelector.svelte';
@@ -48,6 +51,8 @@
 	let loadingSubAccounts = false;
 	let selectingSubAccount = false;
 	let lastLoadedOrgId: string | null = null;
+	let subAccountsSyncOk = false;
+	let subAccountsPublicOrigin: string | null = null;
 
 	// Single concierge front door (#45 collapse): every chat turn flows to the one
 	// WBIT Assistant via the chief endpoint → Cortex bridge. Per-department routing
@@ -59,15 +64,38 @@
 
 	$: if (!$activeDeptId) $activeDeptId = 'chief';
 
+	// Return hop from Portal's "create a sub-account" page (Phase 1.4). The auth callback
+	// force-synced the mirror and 303'd back here with ?subAccountCreated=1, so the new
+	// sub-account is in the list but NOTHING is selected yet. Detected here at init (before
+	// any reactive load fires) and consumed by the first load that has an org id.
+	let pendingSubAccountReturn: { newSubAccountId: string | null } | null =
+		detectSubAccountCreatedReturn();
+
+	function detectSubAccountCreatedReturn() {
+		if (typeof window === 'undefined') return null;
+		try {
+			const params = new URLSearchParams(window.location.search);
+			const marker = params.get(SUBACCOUNT_CREATED_PARAM);
+			// Same marker semantics as the callback: present and not an explicit falsy string.
+			if (marker === null || ['', '0', 'false', 'no', 'off'].includes(marker.trim().toLowerCase()))
+				return null;
+			return { newSubAccountId: params.get(NEW_SUBACCOUNT_ID_PARAM) };
+		} catch (error) {
+			console.error('Failed to read sub-account return params', error);
+			return null;
+		}
+	}
+
 	// Load employee tabs + sub-account scope on mount
 	onMount(async () => {
 		await Promise.all([loadEmployeeTabs(), loadSubAccounts()]);
+		await applySubAccountCreatedReturn();
 	});
 
 	$: if ($activeOrgId && $activeOrgId !== lastLoadedOrgId) {
 		lastLoadedOrgId = $activeOrgId;
 		loadEmployeeTabs();
-		loadSubAccounts();
+		loadSubAccounts().then(applySubAccountCreatedReturn);
 	}
 
 	async function loadEmployeeTabs() {
@@ -91,6 +119,7 @@
 		if (!authToken || !$activeOrgId) {
 			subAccounts = [];
 			activeSubAccountId = null;
+			subAccountsSyncOk = false;
 			return;
 		}
 
@@ -99,12 +128,75 @@
 			const response = await getOrgSubAccounts(authToken, $activeOrgId);
 			subAccounts = response.subAccounts;
 			activeSubAccountId = response.activeSubAccountId;
+			subAccountsSyncOk = response.syncOk === true;
+			subAccountsPublicOrigin = response.publicOrigin ?? null;
 		} catch (error) {
 			subAccounts = [];
 			activeSubAccountId = null;
+			// An empty list from a FAILED fetch must never look like "this org has none" —
+			// clearing syncOk keeps the onboarding nudge silent on this path.
+			subAccountsSyncOk = false;
 			console.error('Failed to load sub-account scope', error);
 		} finally {
 			loadingSubAccounts = false;
+		}
+	}
+
+	/**
+	 * Select the sub-account the user just created in Portal, then clean the URL.
+	 *
+	 * Entirely best-effort: any failure leaves the user in business scope rather than
+	 * throwing, and the marker params are stripped either way so a refresh does not re-run it.
+	 */
+	async function applySubAccountCreatedReturn() {
+		const pending = pendingSubAccountReturn;
+		if (!pending || !$activeOrgId) return;
+		pendingSubAccountReturn = null;
+
+		const authToken = (($user as { token?: string } | undefined)?.token ?? localStorage.token) as string | undefined;
+		if (!authToken) {
+			stripSubAccountReturnParams();
+			return;
+		}
+
+		try {
+			// Re-fetch rather than trusting the list already in hand: the callback's force-sync
+			// is what put the new sub-account in the mirror, and this component may have loaded
+			// before that landed.
+			const response = await getOrgSubAccounts(authToken, $activeOrgId);
+			subAccounts = response.subAccounts;
+			activeSubAccountId = response.activeSubAccountId;
+			subAccountsSyncOk = response.syncOk === true;
+			subAccountsPublicOrigin = response.publicOrigin ?? null;
+
+			// Prefer the id the return path carried. Otherwise a single sub-account is
+			// unambiguously the new one; with several and no id we cannot know which, so we
+			// leave the choice to the user instead of guessing a scope.
+			const target =
+				subAccounts.find((subAccount) => subAccount.id === pending.newSubAccountId)?.id ??
+				(subAccounts.length === 1 ? subAccounts[0].id : null);
+			if (!target || target === activeSubAccountId) return;
+
+			const selection = await selectOrgSubAccount(authToken, $activeOrgId, target);
+			activeSubAccountId = selection.selected;
+			messages = [];
+			chatId = undefined;
+		} catch (error) {
+			console.error('Failed to select newly created sub-account', error);
+		} finally {
+			stripSubAccountReturnParams();
+		}
+	}
+
+	function stripSubAccountReturnParams() {
+		if (typeof window === 'undefined' || typeof history === 'undefined') return;
+		try {
+			const url = new URL(window.location.href);
+			url.searchParams.delete(SUBACCOUNT_CREATED_PARAM);
+			url.searchParams.delete(NEW_SUBACCOUNT_ID_PARAM);
+			history.replaceState(history.state, '', `${url.pathname}${url.search}${url.hash}`);
+		} catch (error) {
+			console.error('Failed to clear sub-account return params', error);
 		}
 	}
 
@@ -417,7 +509,15 @@
 				{activeSubAccountId}
 				loading={loadingSubAccounts}
 				disabled={loading || selectingSubAccount}
+				publicOrigin={subAccountsPublicOrigin}
 				on:select={handleSubAccountSelect}
+			/>
+
+			<FirstBusinessNudge
+				orgId={$activeOrgId}
+				subAccounts={subAccounts}
+				syncOk={subAccountsSyncOk}
+				publicOrigin={subAccountsPublicOrigin}
 			/>
 
 			<div class="bg-[#1c1c21]/80 backdrop-blur-md rounded-xl p-1 inline-flex shadow-lg ring-1 ring-white/10 pointer-events-auto overflow-x-auto max-w-[calc(100vw-6rem)] sm:max-w-none scrollbar-hide">
