@@ -28,6 +28,7 @@ directly (see test_callback_provisioning.py) rather than a re-implementation of 
 import asyncio
 import sys
 import types
+from urllib.parse import parse_qs, urlsplit
 
 import jwt as pyjwt
 import pytest
@@ -98,6 +99,15 @@ def _default():
     from apps.agencyos.backend.routers.auth_callback import DEFAULT_RETURN_PATH
 
     return DEFAULT_RETURN_PATH
+
+
+def _landing(path="/agencyos/", org_id=_ORG_ID):
+    """The location the callback is now expected to emit (#79): the safe path plus the
+    server-resolved ?activeOrgId=. Written as a joiner rather than a literal so the five
+    pre-existing exact-location assertions below stay exact — they assert the FULL new
+    string, they just no longer spell the param out five times."""
+    sep = "&" if "?" in path else "?"
+    return f"{path}{sep}activeOrgId={org_id}"
 
 
 def test_safe_return_path_allows_same_origin_relative_paths(_owui_callback_stubs):
@@ -414,12 +424,21 @@ def callback(monkeypatch, db, _owui_callback_stubs):
 
     token = pyjwt.encode(_jwt_payload(), "test-portal-secret", algorithm="HS256")
 
-    def _call(**params):
+    def _mint(**over):
+        return pyjwt.encode(_jwt_payload(**over), "test-portal-secret", algorithm="HS256")
+
+    def _call(_token=None, **params):
+        # _token (leading underscore) rather than `token`: the callback itself takes a
+        # `token` kwarg, so a same-named passthrough would collide. Tests that need to
+        # vary the JWT claims pass _token=callback.mint(...).
         return asyncio.run(
-            auth_callback.portal_auth_callback(request=_fake_request(), token=token, **params)
+            auth_callback.portal_auth_callback(
+                request=_fake_request(), token=_token or token, **params
+            )
         )
 
     _call.token = token
+    _call.mint = _mint
     return _call
 
 
@@ -427,14 +446,16 @@ def test_callback_defaults_to_agencyos_root(callback, monkeypatch):
     monkeypatch.setattr(subaccount_sync, "_fetch_subaccounts", lambda token: [])
     resp = callback()
     assert resp.status_code == 303
-    assert resp.headers["location"] == "/agencyos/"
+    # UPDATED for #79: the default landing now carries the launch org too.
+    assert resp.headers["location"] == _landing()
 
 
 def test_callback_honors_a_safe_return_path(callback, monkeypatch):
     monkeypatch.setattr(subaccount_sync, "_fetch_subaccounts", lambda token: [])
     resp = callback(return_path="/agencyos/?newSubAccountId=" + _SA2)
     assert resp.status_code == 303
-    assert resp.headers["location"] == "/agencyos/?newSubAccountId=" + _SA2
+    # UPDATED for #79: the honored path keeps its own query AND gains activeOrgId.
+    assert resp.headers["location"] == _landing("/agencyos/?newSubAccountId=" + _SA2)
 
 
 @pytest.mark.parametrize("hostile", ["//evil.com", "https://evil.com/x", "/\\evil.com", "javascript:alert(1)", ""])
@@ -442,7 +463,9 @@ def test_callback_refuses_an_open_redirect(callback, monkeypatch, hostile):
     monkeypatch.setattr(subaccount_sync, "_fetch_subaccounts", lambda token: [])
     resp = callback(return_path=hostile)
     assert resp.status_code == 303
-    assert resp.headers["location"] == "/agencyos/"
+    # UPDATED for #79: hostile input still degrades to the default path — and the
+    # server's activeOrgId rides along, because the guard fired, not the login.
+    assert resp.headers["location"] == _landing()
 
 
 def test_return_marker_forces_a_resync_through_the_throttle(callback, monkeypatch, db):
@@ -467,7 +490,8 @@ def test_return_marker_forces_a_resync_through_the_throttle(callback, monkeypatc
     # Return-from-create hop: bypasses it.
     resp = callback(subaccount_created="1", return_path="/agencyos/?newSubAccountId=" + _SA1)
     assert resp.status_code == 303
-    assert resp.headers["location"] == "/agencyos/?newSubAccountId=" + _SA1
+    # UPDATED for #79.
+    assert resp.headers["location"] == _landing("/agencyos/?newSubAccountId=" + _SA1)
     assert fetched["n"] == 2, "the return marker must bypass the per-org back-off"
     assert {r.id for r in _rows(db, _ORG_ID)} == {_SA1}
 
@@ -507,8 +531,222 @@ def test_sync_failure_on_the_return_hop_still_logs_the_user_in(callback, monkeyp
 
     resp = callback(subaccount_created="1", return_path="/agencyos/x")
     assert resp.status_code == 303
+    # UPDATED for #79: the org id is resolved BEFORE the sync runs, so a Portal blow-up
+    # costs the user neither their login nor their landing org.
+    assert resp.headers["location"] == _landing("/agencyos/x")
+    assert "token=owui-token" in resp.headers["set-cookie"]
+
+
+# ============================================= #79: the launch org on the redirect
+
+def test_callback_emits_the_internal_org_id_not_the_portal_cuid(callback, monkeypatch):
+    """The whole point of the param. The Portal JWT is the only carrier of "which org did
+    this user launch with", and it dies at the callback — so the frontend had to guess and
+    fell back to the last-selected org. The callback now hands the org forward, and it
+    must hand forward the INTERNAL id (what every AgencyOS API is keyed on), not the
+    Portal CUID that happens to be sitting in the claim."""
+    monkeypatch.setattr(subaccount_sync, "_fetch_subaccounts", lambda token: [])
+
+    resp = callback()
+    query = parse_qs(urlsplit(resp.headers["location"]).query)
+
+    assert query["activeOrgId"] == [_ORG_ID]
+    assert _PORTAL_CUID not in resp.headers["location"], "must not leak the Portal CUID"
+
+
+def test_active_org_id_matches_what_the_lookup_resolves(callback, monkeypatch):
+    """Pin the value to get_org_by_portal_id rather than to the fixture's constant, so a
+    future change to how the org is resolved shows up here as a failure."""
+    monkeypatch.setattr(subaccount_sync, "_fetch_subaccounts", lambda token: [])
+
+    seen = {}
+    real = OrganizationsService.get_org_by_portal_id
+
+    def _spy(db_, cuid):
+        org = real(db_, cuid)
+        seen["id"] = None if org is None else org.id
+        return org
+
+    monkeypatch.setattr(OrganizationsService, "get_org_by_portal_id", staticmethod(_spy))
+
+    resp = callback()
+    query = parse_qs(urlsplit(resp.headers["location"]).query)
+    assert query["activeOrgId"] == [seen["id"]]
+
+
+def test_no_active_org_id_when_the_org_does_not_resolve(callback, monkeypatch):
+    """Fail-open, not fail-loud: an unresolvable org emits NO param and the redirect is
+    byte-identical to the pre-#79 behavior. The frontend's fallback handles the absence;
+    a login that 500s because we could not name an org would be strictly worse."""
+    monkeypatch.setattr(subaccount_sync, "_fetch_subaccounts", lambda token: [])
+    monkeypatch.setattr(
+        OrganizationsService, "get_org_by_portal_id", staticmethod(lambda *a: None)
+    )
+
+    resp = callback(return_path="/agencyos/x")
+    assert resp.status_code == 303
+    assert resp.headers["location"] == "/agencyos/x"
+    assert "activeOrgId" not in resp.headers["location"]
+
+
+def test_no_active_org_id_when_the_jwt_carries_a_blank_org_id(callback, monkeypatch):
+    """The other way it fails to resolve: a personal-account JWT with no org claim. The
+    lookup is skipped entirely (it is fail-closed on a blank CUID), so no param."""
+    monkeypatch.setattr(subaccount_sync, "_fetch_subaccounts", lambda token: [])
+
+    resp = callback(_token=callback.mint(org_id=""))
+    assert resp.status_code == 303
+    assert resp.headers["location"] == "/agencyos/"
+
+
+def test_lookup_failure_still_logs_the_user_in(callback, monkeypatch):
+    """Same never-raises posture as the sync block: if resolving the org explodes, the
+    user still lands, just without the param."""
+    def _boom(*a):
+        raise RuntimeError("db exploded")
+
+    monkeypatch.setattr(OrganizationsService, "get_org_by_portal_id", staticmethod(_boom))
+
+    resp = callback(return_path="/agencyos/x")
+    assert resp.status_code == 303
     assert resp.headers["location"] == "/agencyos/x"
     assert "token=owui-token" in resp.headers["set-cookie"]
+
+
+def test_active_org_id_joins_an_existing_query_correctly(callback, monkeypatch):
+    """The regression string concatenation would produce: the safe path very often ALREADY
+    carries a query (the CTA's return hop is literally `/agencyos/?subAccountCreated=1`),
+    so `dest + "?activeOrgId=..."` yields two '?' and a param the browser reads as part of
+    the previous value."""
+    monkeypatch.setattr(subaccount_sync, "_fetch_subaccounts", lambda token: [])
+
+    resp = callback(
+        subaccount_created="1",
+        return_path="/agencyos/?subAccountCreated=1&newSubAccountId=" + _SA1,
+    )
+    location = resp.headers["location"]
+
+    assert location.count("?") == 1, f"malformed query join: {location}"
+    query = parse_qs(urlsplit(location).query)
+    assert query["subAccountCreated"] == ["1"]
+    assert query["newSubAccountId"] == [_SA1]
+    assert query["activeOrgId"] == [_ORG_ID]
+
+
+def test_active_org_id_survives_a_fragment_in_the_return_path(callback, monkeypatch):
+    """The guard explicitly allows a fragment through; the param must land in the QUERY,
+    ahead of it, not get appended past the '#' where no server or router will see it."""
+    monkeypatch.setattr(subaccount_sync, "_fetch_subaccounts", lambda token: [])
+
+    resp = callback(return_path="/agencyos/?newSubAccountId=" + _SA1 + "#top")
+    parts = urlsplit(resp.headers["location"])
+
+    assert parts.fragment == "top"
+    assert parse_qs(parts.query)["activeOrgId"] == [_ORG_ID]
+
+
+def test_a_caller_supplied_active_org_id_is_overridden(callback, monkeypatch):
+    """Hostile input. ?next= is attacker-controlled and `/agencyos/?activeOrgId=<other>`
+    sails through the open-redirect guard — it IS a same-origin relative path. Since
+    URLSearchParams.get() returns the FIRST value, merely appending ours would let the
+    attacker's win and drop the victim into an org of the attacker's choosing. Theirs must
+    be stripped, leaving exactly one activeOrgId: the server's."""
+    monkeypatch.setattr(subaccount_sync, "_fetch_subaccounts", lambda token: [])
+
+    resp = callback(return_path="/agencyos/?activeOrgId=org-attacker-controlled")
+    location = resp.headers["location"]
+    query = parse_qs(urlsplit(location).query)
+
+    assert query["activeOrgId"] == [_ORG_ID], "server value must be the ONLY one"
+    assert "org-attacker-controlled" not in location
+
+
+def test_a_caller_supplied_active_org_id_is_stripped_even_when_unresolved(
+    callback, monkeypatch
+):
+    """The param is outbound-only by definition, so an inbound one is never legitimate —
+    including on the path where we have no value of our own to overwrite it with. Strip
+    unconditionally; the result carries ours or none, never the caller's."""
+    monkeypatch.setattr(subaccount_sync, "_fetch_subaccounts", lambda token: [])
+    monkeypatch.setattr(
+        OrganizationsService, "get_org_by_portal_id", staticmethod(lambda *a: None)
+    )
+
+    resp = callback(return_path="/agencyos/?activeOrgId=org-attacker-controlled&x=1")
+    location = resp.headers["location"]
+
+    assert "activeOrgId" not in location
+    assert parse_qs(urlsplit(location).query) == {"x": ["1"]}
+
+
+@pytest.mark.parametrize(
+    "hostile",
+    [
+        "//evil.com/?activeOrgId=org-attacker-controlled",
+        "https://evil.com/?activeOrgId=org-attacker-controlled",
+        "/\\evil.com?activeOrgId=org-attacker-controlled",
+    ],
+)
+def test_hostile_next_degrades_to_default_and_still_carries_the_server_org(
+    callback, monkeypatch, hostile
+):
+    """Both guards compose: the open-redirect guard throws the destination away entirely,
+    and the surviving default path still gets the server's org — a rejected ?next= is a
+    reason to distrust the path, not a reason to lose the user's landing org."""
+    monkeypatch.setattr(subaccount_sync, "_fetch_subaccounts", lambda token: [])
+
+    resp = callback(return_path=hostile)
+    location = resp.headers["location"]
+
+    assert location.startswith("/agencyos/?")
+    assert urlsplit(location).path == _default()
+    assert parse_qs(urlsplit(location).query) == {"activeOrgId": [_ORG_ID]}
+    assert "evil.com" not in location
+
+
+def test_active_org_id_reaches_the_wire_end_to_end(monkeypatch, db, _owui_callback_stubs):
+    """Through the real router/HTTP layer, with an org row present — the direct-coroutine
+    tests above would not catch FastAPI mangling the Location header."""
+    from apps.agencyos.backend.routers import auth_callback
+
+    db.add(
+        AgencyOSOrganization(
+            id=_ORG_ID, name="Acme", slug="acme", portal_org_id=_PORTAL_CUID,
+            created_at=now_ms(), updated_at=now_ms(),
+        )
+    )
+    db.commit()
+
+    monkeypatch.setenv("JWT_SECRET", "test-portal-secret")
+    monkeypatch.setattr(
+        auth_callback.Users, "get_user_by_email",
+        staticmethod(lambda email, db=None: types.SimpleNamespace(id=_UID, name="Acme Owner")),
+    )
+    monkeypatch.setattr(auth_callback, "create_token", lambda **k: "owui-token")
+    monkeypatch.setattr(auth_callback, "parse_duration", lambda v: None)
+    monkeypatch.setattr(auth_callback, "get_session", lambda: iter([db]))
+    monkeypatch.setattr(
+        OrganizationsService, "provision_from_portal", staticmethod(lambda *a: None)
+    )
+    monkeypatch.setattr(subaccount_sync, "force_sync", lambda *a: None)
+    monkeypatch.setattr(subaccount_sync, "maybe_sync", lambda *a: None)
+
+    app = FastAPI()
+    app.state.config = types.SimpleNamespace(DEFAULT_GROUP_ID=None, JWT_EXPIRES_IN="1h")
+    app.include_router(auth_callback.router)
+    http = TestClient(app, raise_server_exceptions=False)
+
+    token = pyjwt.encode(_jwt_payload(), "test-portal-secret", algorithm="HS256")
+    resp = http.get(
+        "/agencyos/auth/callback",
+        params={"token": token, "next": "/agencyos/?newSubAccountId=" + _SA1,
+                "subAccountCreated": "1"},
+        follow_redirects=False,
+    )
+    assert resp.status_code == 303
+    query = parse_qs(urlsplit(resp.headers["location"]).query)
+    assert query["newSubAccountId"] == [_SA1]
+    assert query["activeOrgId"] == [_ORG_ID]
 
 
 def test_callback_route_parses_the_query_params_end_to_end(monkeypatch, db, _owui_callback_stubs):
@@ -552,9 +790,12 @@ def test_callback_route_parses_the_query_params_end_to_end(monkeypatch, db, _owu
         follow_redirects=False,
     )
     assert resp.status_code == 303
+    # Unchanged by #79 BY DESIGN: no org row exists for this CUID here, so the org does
+    # not resolve and no activeOrgId is emitted — the unresolved case, proven on the wire.
     assert resp.headers["location"] == "/agencyos/?newSubAccountId=" + _SA1
-    # No org row exists for this CUID here, so neither sync runs — the point of this test
-    # is the param plumbing, which the redirect target proves.
+    assert "activeOrgId" not in resp.headers["location"]
+    # No org row -> neither sync runs either. The point of this test is the param
+    # plumbing, which the redirect target proves.
     assert seen == []
 
     # And the guard is live on the HTTP path too.
