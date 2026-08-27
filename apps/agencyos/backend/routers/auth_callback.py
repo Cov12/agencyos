@@ -10,6 +10,7 @@ import logging
 import os
 import time
 import uuid
+from urllib.parse import parse_qsl, urlencode, urlsplit, urlunsplit
 
 import jwt as pyjwt
 from fastapi import APIRouter, HTTPException, Query, Request, status
@@ -37,6 +38,13 @@ DEFAULT_RETURN_PATH = "/agencyos/"
 # Longest return path we will echo into a Location header. A relative path far past this
 # is not a real view, just header bloat.
 _MAX_RETURN_PATH_LEN = 2048
+
+# One-shot query param naming the org this login LAUNCHED with (agencyos#79). The Portal
+# JWT is the only place that fact exists, and it dies with the callback, so the frontend
+# has no way to know which org the user actually clicked into — it fell back to whatever
+# org was last selected. We hand it forward on the redirect instead of in a cookie: it is
+# a property of THIS navigation, not of the session, so it must not outlive the URL.
+ACTIVE_ORG_QUERY_PARAM = "activeOrgId"
 
 
 def _safe_return_path(candidate: str | None) -> str:
@@ -91,6 +99,51 @@ def _is_truthy_marker(value: str | None) -> bool:
     return value.strip().lower() not in ("", "0", "false", "no", "off")
 
 
+def _with_active_org(destination: str, active_org_id: str | None) -> str:
+    """Append ?activeOrgId=<internal org uuid> to an ALREADY-SAFE redirect path (#79).
+
+    Two things this must not get wrong:
+
+      * The join. The safe path routinely arrives carrying a query of its own
+        (`/agencyos/?subAccountCreated=1`, `/agencyos/?newSubAccountId=...`), so naive
+        `+ "?activeOrgId=..."` concatenation produces a second '?' and a param the
+        browser folds into the previous value. We parse the destination and re-emit it,
+        which is correct for the no-query, query and fragment cases alike.
+
+      * The duplicate. `next` is attacker-controlled, and a hostile
+        `?next=/agencyos/?activeOrgId=<some-other-org>` survives _safe_return_path
+        untouched (it IS a same-origin relative path). URLSearchParams.get() returns the
+        FIRST value, so merely appending ours would let the attacker's win and drop the
+        victim into an org they chose. Every caller-supplied activeOrgId is therefore
+        STRIPPED before the server value is appended — ours is the only one in the result.
+
+    Called AFTER _safe_return_path, never instead of it. The strip is UNCONDITIONAL —
+    it runs even when the org does not resolve, because this param is outbound-only by
+    definition and an inbound one is never legitimate, whether or not we have a value of
+    our own to put there. So the result carries our activeOrgId, or none at all; never
+    the caller's. Any parsing failure degrades to the untouched destination — the param
+    is a convenience, and nothing here may cost the user their login.
+
+    Note the round-trip normalizes the surviving query's encoding (a preserved `%20`
+    re-emits as `+`). Both decode identically; the frontend reads values, not the raw
+    string."""
+    try:
+        parts = urlsplit(destination)
+        existing = parse_qsl(parts.query, keep_blank_values=True)
+        pairs = [(key, value) for key, value in existing if key != ACTIVE_ORG_QUERY_PARAM]
+        if not active_org_id and len(pairs) == len(existing):
+            # Nothing to strip, nothing to add — leave the destination byte-identical.
+            return destination
+        if active_org_id:
+            pairs.append((ACTIVE_ORG_QUERY_PARAM, active_org_id))
+        return urlunsplit(
+            (parts.scheme, parts.netloc, parts.path, urlencode(pairs), parts.fragment)
+        )
+    except Exception as e:
+        logger.warning(f"Could not attach {ACTIVE_ORG_QUERY_PARAM} to redirect: {e}")
+        return destination
+
+
 @router.get("/callback")
 async def portal_auth_callback(
     request: Request,
@@ -120,6 +173,12 @@ async def portal_auth_callback(
         that IGNORES the per-org back-off, so the just-created sub-account is present in
         the mirror by the time the redirect lands. Without it, normal logins keep the
         throttled maybe_sync behavior.
+
+    Emitted ON the redirect (agencyos#79):
+      * ?activeOrgId=<internal org uuid>  — the org this login launched with, resolved
+        server-side from the JWT's org_id claim. One-shot and outbound only: any
+        activeOrgId arriving in ?next= is stripped, so a caller can never choose it.
+        Omitted entirely when the org does not resolve.
     """
     logger.info(f"[AuthCallback] Hit /agencyos/auth/callback, token present: {bool(token)}")
 
@@ -234,21 +293,41 @@ async def portal_auth_callback(
         # Everything stays inside this never-raises try: a Portal failure here degrades to
         # a stale mirror, never a broken login.
         force_resync = _is_truthy_marker(subaccount_created)
+        portal_cuid = payload.get("org_id")
+
+        # Resolve the INTERNAL AgencyOS org id for the org this login launched with
+        # (agencyos#79). provision_from_portal above has already find-or-created the org
+        # bound to this Portal CUID and upserted membership, so by here the row exists and
+        # this is a plain lookup of the uuid the frontend needs — the Portal CUID in the
+        # JWT is not it, and the JWT does not survive the redirect.
+        #
+        # Deliberately hoisted OUT of the sync block below: sub-account sync talks to
+        # Portal over the network and is allowed to fail, but which org the user launched
+        # is already settled by then, so a Portal outage must not also cost us the landing
+        # org. Stays None if the JWT carried no org_id or provisioning swallowed an error;
+        # None means we emit no param at all and the redirect is exactly what it was
+        # before this change.
+        launch_org_id = None
         try:
-            portal_cuid = payload.get("org_id")
             if portal_cuid:
                 org = OrganizationsService.get_org_by_portal_id(db, portal_cuid)
                 if org is not None:
-                    from ..services import subaccount_sync
+                    launch_org_id = org.id
+        except Exception as e:
+            logger.warning(f"AgencyOS launch-org lookup at login failed (non-fatal): {e}")
 
-                    if force_resync:
-                        logger.info(
-                            "Portal return-from-create: forcing sub-account resync for org %s",
-                            org.id,
-                        )
-                        subaccount_sync.force_sync(db, org.id, portal_cuid, token)
-                    else:
-                        subaccount_sync.maybe_sync(db, org.id, portal_cuid, token)
+        try:
+            if launch_org_id:
+                from ..services import subaccount_sync
+
+                if force_resync:
+                    logger.info(
+                        "Portal return-from-create: forcing sub-account resync for org %s",
+                        launch_org_id,
+                    )
+                    subaccount_sync.force_sync(db, launch_org_id, portal_cuid, token)
+                else:
+                    subaccount_sync.maybe_sync(db, launch_org_id, portal_cuid, token)
         except Exception as e:
             logger.warning(f"AgencyOS sub-account sync at login failed (non-fatal): {e}")
 
@@ -266,7 +345,10 @@ async def portal_auth_callback(
         # Create redirect response. #B3: the destination is attacker-controllable input,
         # so it goes through the open-redirect guard; an unsafe value degrades to
         # DEFAULT_RETURN_PATH instead of failing the login.
-        destination = _safe_return_path(return_path)
+        # #79: and the safe path then carries the launch org forward as a one-shot param.
+        # Order matters — the guard runs first and decides the path, _with_active_org only
+        # rewrites that path's query (and strips any activeOrgId the caller smuggled in).
+        destination = _with_active_org(_safe_return_path(return_path), launch_org_id)
         response = RedirectResponse(url=destination, status_code=303)
 
         # Set cookie with path="/" so it's available on all paths
