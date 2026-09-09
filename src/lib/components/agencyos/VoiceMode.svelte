@@ -2,9 +2,6 @@
 	import { goto } from '$app/navigation';
 	import { onDestroy, onMount } from 'svelte';
 	import { get } from 'svelte/store';
-
-	export let onDismiss: (() => void) | undefined = undefined;
-	export let selectedEmployee: { id: string; agent_name: string; department: string; agent_icon?: string } | null = null;
 	import { user } from '$lib/stores';
 	import { activeDeptId, activeDept, activeOrgId } from '$lib/stores/agencyos';
 	import {
@@ -14,6 +11,19 @@
 		voiceConfig
 	} from '$lib/stores/voice';
 	import MaterialIcon from '$lib/components/agencyos/shared/MaterialIcon.svelte';
+
+	export let onDismiss: (() => void) | undefined = undefined;
+	export let selectedEmployee: {
+		id: string;
+		agent_name: string;
+		department: string;
+		agent_icon?: string;
+	} | null = null;
+	export let chatId: string | undefined = undefined;
+	export let ensureChat: (() => Promise<string | null>) | undefined = undefined;
+	export let onPersistTurn:
+		| ((turn: { transcription: string; response: string; department?: string }) => Promise<void>)
+		| undefined = undefined;
 
 	type ConnectionState = 'connected' | 'connecting' | 'disconnected';
 
@@ -38,6 +48,7 @@
 	let abortProcessing = false;
 	let micFailed = false;
 	let textInput = '';
+	let pendingTranscription = '';
 
 	const MAX_RECONNECT_ATTEMPTS = 3;
 
@@ -64,20 +75,28 @@
 			| undefined;
 	}
 
-	function setVoiceState(state: 'idle' | 'connecting' | 'listening' | 'processing' | 'speaking' | 'error') {
+	function setVoiceState(
+		state: 'idle' | 'connecting' | 'listening' | 'processing' | 'speaking' | 'error'
+	) {
 		voiceStateStore.set(state);
 	}
 
 	function buildWsUrl() {
 		const token = getAuthToken();
 		const orgId = $activeOrgId;
-		const deptSlug = $activeDept?.slug ?? ($activeDeptId === 'chief' ? 'chief' : $activeDeptId ?? 'chief');
+		const deptSlug = $activeDeptId === 'chief' ? 'chief' : ($activeDeptId ?? 'chief');
 
 		if (!token) throw new Error('Missing auth token. Please sign in again.');
 		if (!orgId) throw new Error('Missing organization context.');
 
 		const protocol = location.protocol === 'https:' ? 'wss' : 'ws';
-		return `${protocol}://${location.host}/api/agencyos/voice/ws?token=${encodeURIComponent(token)}&org_id=${encodeURIComponent(orgId)}&department_slug=${encodeURIComponent(deptSlug ?? 'chief')}`;
+		const params = new URLSearchParams({
+			token,
+			org_id: orgId,
+			department_slug: deptSlug ?? 'chief'
+		});
+		if (chatId) params.set('chat_id', chatId);
+		return `${protocol}://${location.host}/api/agencyos/voice/ws?${params.toString()}`;
 	}
 
 	function connectWebSocket() {
@@ -92,7 +111,8 @@
 			ws.onopen = () => {
 				reconnectAttempts = 0;
 				connectionState = 'connected';
-				if ($voiceStateStore === 'connecting' || $voiceStateStore === 'error') setVoiceState('idle');
+				if ($voiceStateStore === 'connecting' || $voiceStateStore === 'error')
+					setVoiceState('idle');
 			};
 
 			ws.onmessage = async (event: MessageEvent) => {
@@ -144,6 +164,14 @@
 		connectionState = 'disconnected';
 	}
 
+	async function resolveChatId() {
+		if (chatId) return chatId;
+		if (!ensureChat) return null;
+		const resolvedChatId = await ensureChat();
+		if (resolvedChatId) chatId = resolvedChatId;
+		return resolvedChatId;
+	}
+
 	function sendWsMessage(payload: Record<string, unknown>) {
 		if (!ws || ws.readyState !== WebSocket.OPEN) {
 			errorMessage = 'Voice channel is not connected yet.';
@@ -191,7 +219,9 @@
 		try {
 			const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
 			const mimeType = getRecorderMimeType();
-			mediaRecorder = mimeType ? new MediaRecorder(stream, { mimeType }) : new MediaRecorder(stream);
+			mediaRecorder = mimeType
+				? new MediaRecorder(stream, { mimeType })
+				: new MediaRecorder(stream);
 			micFailed = false;
 
 			mediaRecorder.ondataavailable = async (event: BlobEvent) => {
@@ -206,7 +236,18 @@
 
 				if (!abortProcessing) {
 					setVoiceState('processing');
-					sendWsMessage({ type: 'end_audio' });
+					resolveChatId()
+						.then((resolvedChatId) => {
+							sendWsMessage({
+								type: 'end_audio',
+								...(resolvedChatId ? { chat_id: resolvedChatId } : {})
+							});
+						})
+						.catch((error) => {
+							errorMessage =
+								error instanceof Error ? error.message : 'Failed to prepare voice chat.';
+							setVoiceState('error');
+						});
 				} else {
 					setVoiceState('idle');
 					abortProcessing = false;
@@ -303,6 +344,7 @@
 			const text = String(payload?.text ?? '').trim();
 			if (!text) return;
 			lastTranscription = text;
+			pendingTranscription = text;
 			addVoiceTurn('user', text, targetName);
 			conversationHistory = [...conversationHistory, { role: 'user', text, timestamp: Date.now() }];
 			return;
@@ -314,6 +356,18 @@
 			lastResponse = text;
 			addVoiceTurn('ai', text, targetName);
 			conversationHistory = [...conversationHistory, { role: 'ai', text, timestamp: Date.now() }];
+			if (pendingTranscription && onPersistTurn) {
+				const transcription = pendingTranscription;
+				pendingTranscription = '';
+				onPersistTurn({
+					transcription,
+					response: text,
+					...(typeof payload?.department === 'string' ? { department: payload.department } : {})
+				}).catch((error) => {
+					console.error('Failed to persist voice turn', error);
+					errorMessage = 'Voice response was not saved to chat history.';
+				});
+			}
 			if (get(voiceConfig).autoPlayResponse === false) {
 				setVoiceState('idle');
 			}
@@ -323,7 +377,10 @@
 		if (type === 'audio') {
 			const data = String(payload?.data ?? '');
 			if (!data) return;
-			await playResponseAudio(data, typeof payload?.mime_type === 'string' ? payload.mime_type : undefined);
+			await playResponseAudio(
+				data,
+				typeof payload?.mime_type === 'string' ? payload.mime_type : undefined
+			);
 			return;
 		}
 
@@ -339,17 +396,29 @@
 		}
 	}
 
-	function submitTextFallback() {
-		if (!textInput.trim()) return;
+	async function submitTextFallback() {
+		const content = textInput.trim();
+		if (!content) return;
 		errorMessage = '';
-		lastTranscription = textInput.trim();
+		lastTranscription = content;
+		pendingTranscription = content;
 		setVoiceState('processing');
-		const sent = sendWsMessage({ type: 'text', content: textInput.trim() });
-		if (!sent) {
-			setVoiceState('idle');
-			return;
+		try {
+			const resolvedChatId = await resolveChatId();
+			const sent = sendWsMessage({
+				type: 'text',
+				content,
+				...(resolvedChatId ? { chat_id: resolvedChatId } : {})
+			});
+			if (!sent) {
+				setVoiceState('idle');
+				return;
+			}
+			textInput = '';
+		} catch (error) {
+			errorMessage = error instanceof Error ? error.message : 'Failed to prepare voice chat.';
+			setVoiceState('error');
 		}
-		textInput = '';
 	}
 
 	function dismiss() {
@@ -383,9 +452,13 @@
 
 <svelte:window on:keydown={handleKeydown} />
 
-<div class="absolute inset-0 z-50 flex flex-col items-center justify-center bg-black/40 backdrop-blur-xl px-4">
+<div
+	class="absolute inset-0 z-50 flex flex-col items-center justify-center bg-black/40 backdrop-blur-xl px-4"
+>
 	<div class="flex flex-col items-center justify-center w-full max-w-2xl relative">
-		<div class="text-xs sm:text-sm text-[#20B2AA]/90 tracking-wide uppercase mb-4 sm:mb-6 px-3 py-1.5 rounded-full border border-[#20B2AA]/25 bg-[#1c1c21]/70 backdrop-blur-md flex items-center gap-2">
+		<div
+			class="text-xs sm:text-sm text-[#20B2AA]/90 tracking-wide uppercase mb-4 sm:mb-6 px-3 py-1.5 rounded-full border border-[#20B2AA]/25 bg-[#1c1c21]/70 backdrop-blur-md flex items-center gap-2"
+		>
 			<span
 				class={`inline-block w-2 h-2 rounded-full ${
 					connectionState === 'connected'
@@ -399,40 +472,79 @@
 		</div>
 
 		<!-- Orb -->
-		<div class="relative flex items-center justify-center w-[200px] h-[200px] sm:w-[260px] sm:h-[260px] md:w-[300px] md:h-[300px] mb-8 sm:mb-10">
+		<div
+			class="relative flex items-center justify-center w-[200px] h-[200px] sm:w-[260px] sm:h-[260px] md:w-[300px] md:h-[300px] mb-8 sm:mb-10"
+		>
 			<div class="absolute inset-0 rounded-full bg-[#20B2AA]/20 blur-[80px] animate-pulse"></div>
 			{#if $voiceStateStore === 'listening' || $voiceStateStore === 'speaking'}
-				<div class="absolute w-full h-full rounded-full border border-[#20B2AA]/30 animate-[wave_2s_linear_infinite] opacity-0"></div>
-				<div class="absolute w-full h-full rounded-full border border-[#20B2AA]/20 animate-[wave_2s_linear_infinite] opacity-0" style="animation-delay: 0.8s"></div>
+				<div
+					class="absolute w-full h-full rounded-full border border-[#20B2AA]/30 animate-[wave_2s_linear_infinite] opacity-0"
+				></div>
+				<div
+					class="absolute w-full h-full rounded-full border border-[#20B2AA]/20 animate-[wave_2s_linear_infinite] opacity-0"
+					style="animation-delay: 0.8s"
+				></div>
 			{/if}
-			<div class="relative w-32 h-32 sm:w-40 sm:h-40 md:w-48 md:h-48 rounded-full orb-core backdrop-blur-md flex items-center justify-center border border-white/10 {$voiceStateStore === 'listening' ? 'animate-[orb-breathe_4s_ease-in-out_infinite]' : ''}">
-				<div class="absolute top-4 left-6 w-16 h-16 bg-gradient-to-br from-white/30 to-transparent rounded-full blur-xl transform -rotate-45"></div>
+			<div
+				class="relative w-32 h-32 sm:w-40 sm:h-40 md:w-48 md:h-48 rounded-full orb-core backdrop-blur-md flex items-center justify-center border border-white/10 {$voiceStateStore ===
+				'listening'
+					? 'animate-[orb-breathe_4s_ease-in-out_infinite]'
+					: ''}"
+			>
+				<div
+					class="absolute top-4 left-6 w-16 h-16 bg-gradient-to-br from-white/30 to-transparent rounded-full blur-xl transform -rotate-45"
+				></div>
 				{#if $voiceStateStore === 'processing' || $voiceStateStore === 'connecting'}
-					<MaterialIcon icon="hourglass_top" size={48} class="text-white/70 animate-spin sm:text-[64px]" />
+					<MaterialIcon
+						icon="hourglass_top"
+						size={48}
+						class="text-white/70 animate-spin sm:text-[64px]"
+					/>
 				{:else if $voiceStateStore === 'speaking'}
-					<MaterialIcon icon="volume_up" size={48} class="text-white/70 drop-shadow-[0_0_15px_rgba(255,255,255,0.5)] sm:text-[64px]" />
+					<MaterialIcon
+						icon="volume_up"
+						size={48}
+						class="text-white/70 drop-shadow-[0_0_15px_rgba(255,255,255,0.5)] sm:text-[64px]"
+					/>
 				{:else}
-					<MaterialIcon icon="graphic_eq" size={48} class="text-white/60 drop-shadow-[0_0_15px_rgba(255,255,255,0.5)] sm:text-[64px]" />
+					<MaterialIcon
+						icon="graphic_eq"
+						size={48}
+						class="text-white/60 drop-shadow-[0_0_15px_rgba(255,255,255,0.5)] sm:text-[64px]"
+					/>
 				{/if}
 			</div>
 		</div>
 
 		<!-- Status -->
 		<div class="flex flex-col items-center gap-2 sm:gap-3 text-center z-10 px-2">
-			<h1 class="text-white text-xl sm:text-2xl md:text-4xl font-semibold tracking-tight drop-shadow-xl break-words">{statusText}</h1>
-			<p class="text-slate-300 text-sm sm:text-base md:text-lg font-light tracking-wide max-w-md break-words">{subtitle}</p>
+			<h1
+				class="text-white text-xl sm:text-2xl md:text-4xl font-semibold tracking-tight drop-shadow-xl break-words"
+			>
+				{statusText}
+			</h1>
+			<p
+				class="text-slate-300 text-sm sm:text-base md:text-lg font-light tracking-wide max-w-md break-words"
+			>
+				{subtitle}
+			</p>
 		</div>
 
 		{#if $voiceStateStore === 'speaking'}
 			<!-- Waveform -->
 			<div class="h-12 flex items-center gap-1 mt-6 sm:mt-8 opacity-60">
 				{#each [3, 6, 4, 8, 4, 6, 3] as h, i}
-					<div class="w-1 bg-[#20B2AA] rounded-full animate-pulse" style="height: {h * 4}px; animation-duration: {0.8 + i * 0.2}s"></div>
+					<div
+						class="w-1 bg-[#20B2AA] rounded-full animate-pulse"
+						style="height: {h * 4}px; animation-duration: {0.8 + i * 0.2}s"
+					></div>
 				{/each}
 			</div>
 		{/if}
 
-		<div class="mt-6 w-full max-w-xl rounded-2xl border border-white/10 bg-[#1c1c21]/70 backdrop-blur-md p-4 sm:p-5 space-y-2">
+		<div
+			class="mt-6 w-full max-w-xl rounded-2xl border border-white/10 bg-[#1c1c21]/70 backdrop-blur-md p-4 sm:p-5 space-y-2"
+		>
 			{#if lastTranscription}
 				<p class="text-xs uppercase tracking-wider text-white/40">Heard</p>
 				<p class="text-sm sm:text-base text-white/90">“{lastTranscription}”</p>
@@ -447,13 +559,17 @@
 		</div>
 
 		{#if errorMessage}
-			<p class="mt-4 text-sm text-rose-300 bg-rose-500/10 border border-rose-300/20 rounded-xl px-3 py-2 max-w-xl text-center">
+			<p
+				class="mt-4 text-sm text-rose-300 bg-rose-500/10 border border-rose-300/20 rounded-xl px-3 py-2 max-w-xl text-center"
+			>
 				{errorMessage}
 			</p>
 		{/if}
 
 		{#if micFailed}
-			<div class="mt-3 w-full max-w-xl rounded-2xl border border-white/10 bg-[#1c1c21]/70 backdrop-blur-md p-3 sm:p-4 flex items-center gap-2">
+			<div
+				class="mt-3 w-full max-w-xl rounded-2xl border border-white/10 bg-[#1c1c21]/70 backdrop-blur-md p-3 sm:p-4 flex items-center gap-2"
+			>
 				<input
 					class="flex-1 bg-transparent border border-white/15 rounded-xl px-3 py-2 text-sm text-white placeholder:text-white/40 focus:outline-none"
 					type="text"
@@ -461,7 +577,10 @@
 					placeholder="Type a message instead"
 					on:keydown={(e) => e.key === 'Enter' && submitTextFallback()}
 				/>
-				<button class="group flex items-center gap-2 pl-4 pr-4 h-10 min-h-[40px] rounded-full border border-[#20B2AA]/40 bg-[#20B2AA]/15 hover:bg-[#20B2AA]/25 transition-all" on:click={submitTextFallback}>
+				<button
+					class="group flex items-center gap-2 pl-4 pr-4 h-10 min-h-[40px] rounded-full border border-[#20B2AA]/40 bg-[#20B2AA]/15 hover:bg-[#20B2AA]/25 transition-all"
+					on:click={submitTextFallback}
+				>
 					<MaterialIcon icon="send" size={16} class="text-white" />
 					<span class="text-white text-xs sm:text-sm font-semibold tracking-wide">Send</span>
 				</button>
@@ -471,8 +590,12 @@
 		{#if recentTurns.length}
 			<div class="mt-4 w-full max-w-xl space-y-2">
 				{#each recentTurns as turn}
-					<div class="text-xs sm:text-sm rounded-xl px-3 py-2 border border-white/10 bg-white/[0.03] text-white/70">
-						<span class="uppercase tracking-wide text-[10px] text-white/40 mr-2">{turn.role === 'user' ? 'You' : targetName}</span>
+					<div
+						class="text-xs sm:text-sm rounded-xl px-3 py-2 border border-white/10 bg-white/[0.03] text-white/70"
+					>
+						<span class="uppercase tracking-wide text-[10px] text-white/40 mr-2"
+							>{turn.role === 'user' ? 'You' : targetName}</span
+						>
 						{turn.text}
 					</div>
 				{/each}
@@ -481,7 +604,9 @@
 	</div>
 
 	<!-- Controls -->
-	<div class="absolute bottom-8 sm:bottom-12 flex items-center gap-3 sm:gap-4 flex-wrap justify-center px-4">
+	<div
+		class="absolute bottom-8 sm:bottom-12 flex items-center gap-3 sm:gap-4 flex-wrap justify-center px-4"
+	>
 		{#if $voiceStateStore === 'idle' || $voiceStateStore === 'error'}
 			<button
 				class="group flex items-center gap-2 sm:gap-3 pl-5 pr-6 h-14 min-h-[56px] rounded-full border border-[#20B2AA]/40 bg-[#20B2AA]/15 hover:bg-[#20B2AA]/25 transition-all shadow-[0_0_30px_rgba(32,178,170,0.2)]"
@@ -497,7 +622,9 @@
 				class="group flex items-center gap-2 pl-4 pr-5 h-12 min-h-[48px] rounded-full hover:bg-rose-500/15 transition-all border border-rose-300/30 hover:border-rose-200/50 bg-rose-500/10 backdrop-blur-md"
 				on:click={interruptVoiceMode}
 			>
-				<div class="w-6 h-6 bg-rose-900/70 rounded-full flex items-center justify-center group-hover:bg-rose-800/80 transition-colors">
+				<div
+					class="w-6 h-6 bg-rose-900/70 rounded-full flex items-center justify-center group-hover:bg-rose-800/80 transition-colors"
+				>
 					<MaterialIcon icon="stop" size={16} class="text-white" />
 				</div>
 				<span class="text-white text-sm font-semibold tracking-wide">
@@ -507,16 +634,26 @@
 		{/if}
 
 		{#if $voiceStateStore === 'listening'}
-			<button class="group flex items-center gap-2 pl-4 pr-5 h-12 min-h-[48px] rounded-full hover:bg-white/10 transition-all border border-white/10 hover:border-white/20 bg-white/5 backdrop-blur-md" on:click={stopListening}>
-				<div class="w-6 h-6 bg-slate-700 rounded-full flex items-center justify-center group-hover:bg-slate-600 transition-colors">
+			<button
+				class="group flex items-center gap-2 pl-4 pr-5 h-12 min-h-[48px] rounded-full hover:bg-white/10 transition-all border border-white/10 hover:border-white/20 bg-white/5 backdrop-blur-md"
+				on:click={stopListening}
+			>
+				<div
+					class="w-6 h-6 bg-slate-700 rounded-full flex items-center justify-center group-hover:bg-slate-600 transition-colors"
+				>
 					<MaterialIcon icon="check" size={16} class="text-white" />
 				</div>
 				<span class="text-white text-sm font-semibold tracking-wide">Done</span>
 			</button>
 		{/if}
 
-		<button class="group flex items-center gap-2 pl-4 pr-5 h-12 min-h-[48px] rounded-full hover:bg-white/10 transition-all border border-white/10 hover:border-white/20 bg-white/5 backdrop-blur-md" on:click={dismiss}>
-			<div class="w-6 h-6 bg-slate-800 rounded-full flex items-center justify-center group-hover:bg-slate-700 transition-colors">
+		<button
+			class="group flex items-center gap-2 pl-4 pr-5 h-12 min-h-[48px] rounded-full hover:bg-white/10 transition-all border border-white/10 hover:border-white/20 bg-white/5 backdrop-blur-md"
+			on:click={dismiss}
+		>
+			<div
+				class="w-6 h-6 bg-slate-800 rounded-full flex items-center justify-center group-hover:bg-slate-700 transition-colors"
+			>
 				<MaterialIcon icon="close" size={16} class="text-white" />
 			</div>
 			<span class="text-white text-sm font-semibold tracking-wide">Dismiss</span>
@@ -530,15 +667,34 @@
 
 <style>
 	.orb-core {
-		background: radial-gradient(circle at 30% 30%, rgba(32, 178, 170, 0.8), rgba(32, 178, 170, 0.2));
-		box-shadow: 0 0 60px rgba(32, 178, 170, 0.4), inset 0 0 40px rgba(255, 255, 255, 0.2);
+		background: radial-gradient(
+			circle at 30% 30%,
+			rgba(32, 178, 170, 0.8),
+			rgba(32, 178, 170, 0.2)
+		);
+		box-shadow:
+			0 0 60px rgba(32, 178, 170, 0.4),
+			inset 0 0 40px rgba(255, 255, 255, 0.2);
 	}
 	@keyframes orb-breathe {
-		0%, 100% { transform: scale(1); opacity: 0.8; }
-		50% { transform: scale(1.05); opacity: 1; }
+		0%,
+		100% {
+			transform: scale(1);
+			opacity: 0.8;
+		}
+		50% {
+			transform: scale(1.05);
+			opacity: 1;
+		}
 	}
 	@keyframes wave {
-		0% { transform: scale(1); opacity: 0.5; }
-		100% { transform: scale(2); opacity: 0; }
+		0% {
+			transform: scale(1);
+			opacity: 0.5;
+		}
+		100% {
+			transform: scale(2);
+			opacity: 0;
+		}
 	}
 </style>

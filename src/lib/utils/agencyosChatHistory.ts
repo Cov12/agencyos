@@ -153,7 +153,8 @@ export function isAgencyOSChatForScope(
 	scope: { org_id: string; sub_account_id?: string | null }
 ): boolean {
 	const metadata = chat.agencyos;
-	if (!metadata?.agencyos || metadata.source !== 'agencyos') return false;
+	if (!metadata?.agencyos || !['agencyos', 'agencyos_voice'].includes(String(metadata.source)))
+		return false;
 	if (metadata.org_id !== scope.org_id) return false;
 	if (scope.sub_account_id !== undefined && metadata.sub_account_id !== scope.sub_account_id)
 		return false;

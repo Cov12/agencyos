@@ -197,7 +197,9 @@
 		);
 	}
 
-	function buildAgencyOSMetadata(): AgencyOSChatMetadata {
+	function buildAgencyOSMetadata(
+		source: AgencyOSChatMetadata['source'] = 'agencyos'
+	): AgencyOSChatMetadata {
 		const targetDept = selectedEmployee?.department ?? $activeDeptId ?? 'chief';
 		const targetType = selectedEmployee
 			? 'employee'
@@ -206,7 +208,7 @@
 				: 'department';
 		return {
 			agencyos: true,
-			source: 'agencyos',
+			source,
 			org_id: $activeOrgId,
 			sub_account_id: currentSubAccountId(),
 			department_slug: targetDept,
@@ -300,6 +302,43 @@
 		if (!chatId) return;
 		await updateChatById(authToken, chatId, createAgencyOSChatPayload(nextMessages, metadata));
 		await loadAgencyOSChats();
+	}
+
+	async function ensureVoiceChat(): Promise<string | null> {
+		const authToken = getAuthToken();
+		if (!authToken || !$activeOrgId) return null;
+		return ensurePersistedChat(authToken, messages, buildAgencyOSMetadata('agencyos_voice'));
+	}
+
+	async function persistVoiceTurn(turn: {
+		transcription: string;
+		response: string;
+		department?: string;
+	}) {
+		const authToken = getAuthToken();
+		if (!authToken || !$activeOrgId) return;
+
+		const metadata = buildAgencyOSMetadata('agencyos_voice');
+		const nextMessages: ChatMessage[] = [
+			...messages,
+			{
+				id: crypto.randomUUID(),
+				role: 'user',
+				content: turn.transcription,
+				time: formatTime()
+			},
+			{
+				id: crypto.randomUUID(),
+				role: 'ai',
+				persona: turn.department ?? chatTargetName,
+				content: turn.response,
+				time: formatTime()
+			}
+		];
+
+		messages = nextMessages;
+		await ensurePersistedChat(authToken, nextMessages, metadata);
+		await persistChat(authToken, nextMessages, metadata);
 	}
 
 	async function sendMessage() {
@@ -799,7 +838,13 @@
 </div>
 
 {#if voiceModeOpen}
-	<VoiceMode onDismiss={() => (voiceModeOpen = false)} {selectedEmployee} />
+	<VoiceMode
+		onDismiss={() => (voiceModeOpen = false)}
+		{selectedEmployee}
+		{chatId}
+		ensureChat={ensureVoiceChat}
+		onPersistTurn={persistVoiceTurn}
+	/>
 {/if}
 
 <style>
