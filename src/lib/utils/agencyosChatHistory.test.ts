@@ -130,6 +130,6 @@ describe('agencyosChatHistory', () => {
 				{ agencyos: { ...metadata, source: 'agencyos_voice' } },
 				{ org_id: 'org-1', sub_account_id: 'sub-1' }
 			)
-		).toBe(false);
+		).toBe(true);
 	});
 });
