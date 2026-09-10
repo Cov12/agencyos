@@ -463,6 +463,7 @@
 </script>
 
 <div
+	data-testid="agencyos-chat-page"
 	class="w-full h-full flex bg-gradient-to-br from-[#2d2b42] to-[#0f0f13] relative overflow-hidden"
 >
 	<!-- Background Decor -->
@@ -486,6 +487,7 @@
 
 	<!-- Thread Sidebar -->
 	<aside
+		data-testid="agencyos-thread-sidebar"
 		class="fixed md:relative w-[280px] lg:w-[320px] flex-shrink-0 flex flex-col h-full z-40 md:z-20 transition-transform duration-200 md:translate-x-0"
 		class:translate-x-0={sidebarOpen}
 		class:-translate-x-full={!sidebarOpen}
@@ -513,6 +515,7 @@
 					>search</span
 				>
 				<input
+					data-testid="agencyos-thread-search"
 					bind:value={searchQuery}
 					class="w-full bg-white/5 border border-white/5 rounded-lg py-2.5 pl-9 pr-3 text-sm text-white placeholder-white/30 focus:outline-none focus:ring-1 focus:ring-[#6961ff]/50 focus:bg-white/10 transition-all"
 					placeholder="Search threads..."
@@ -610,6 +613,8 @@
 			{:else}
 				{#each filteredThreads as thread}
 					<button
+						data-testid="agencyos-recent-chat"
+						data-chat-id={thread.id}
 						class="w-full flex items-center gap-3 px-3 py-3 min-h-[48px] rounded-lg text-left group transition-all {thread.active
 							? 'bg-[#6961ff]/20 border border-[#6961ff]/20'
 							: 'hover:bg-white/5 border border-transparent'}"
@@ -707,6 +712,7 @@
 
 		<!-- Messages -->
 		<div
+			data-testid="agencyos-chat-messages"
 			class="flex-1 overflow-y-auto px-3 sm:px-6 md:px-12 pt-24 sm:pt-28 pb-28 sm:pb-32 flex flex-col gap-4 sm:gap-6"
 		>
 			<div class="flex justify-center">
@@ -717,7 +723,11 @@
 
 			{#each messages as msg}
 				{#if msg.role === 'ai'}
-					<div class="flex gap-2.5 sm:gap-4 items-start max-w-[95%] sm:max-w-[85%]">
+					<div
+						data-testid="agencyos-chat-message"
+						data-role="ai"
+						class="flex gap-2.5 sm:gap-4 items-start max-w-[95%] sm:max-w-[85%]"
+					>
 						<div
 							class="w-8 h-8 sm:w-10 sm:h-10 rounded-full bg-gradient-to-br from-indigo-500 to-purple-600 flex items-center justify-center flex-shrink-0 shadow-lg border border-white/10"
 						>
@@ -769,6 +779,8 @@
 					</div>
 				{:else}
 					<div
+						data-testid="agencyos-chat-message"
+						data-role="user"
 						class="flex gap-2.5 sm:gap-4 items-end justify-end max-w-[95%] sm:max-w-[85%] self-end"
 					>
 						<div class="flex flex-col gap-1 items-end min-w-0">
@@ -797,12 +809,14 @@
 				>
 					<button
 						type="button"
+						data-testid="agencyos-new-chat"
 						class="h-11 w-11 flex items-center justify-center rounded-xl text-white/50 hover:text-white hover:bg-white/10 transition-all mb-0.5 flex-shrink-0"
 						on:click={startNewChat}
 					>
 						<MaterialIcon icon="add_circle" />
 					</button>
 					<textarea
+						data-testid="agencyos-chat-input"
 						bind:value={messageInput}
 						class="flex-1 bg-transparent border-0 text-white placeholder-white/40 focus:ring-0 resize-none py-3 max-h-32 text-sm sm:text-base leading-normal min-w-0"
 						{placeholder}
@@ -818,6 +832,7 @@
 					<div class="flex items-center gap-1.5 sm:gap-2 mb-0.5 flex-shrink-0">
 						<button
 							type="button"
+							data-testid="agencyos-voice-button"
 							class="relative h-11 w-11 flex items-center justify-center rounded-xl bg-white/5 hover:bg-white/10 transition-all"
 							on:click={() => (voiceModeOpen = true)}
 						>
@@ -825,6 +840,7 @@
 						</button>
 						<button
 							type="submit"
+							data-testid="agencyos-chat-send"
 							disabled={loading || !messageInput.trim()}
 							class="h-11 w-11 flex items-center justify-center rounded-xl bg-[#6961ff] hover:bg-[#5851d8] text-white transition-all shadow-lg shadow-[#6961ff]/20 disabled:opacity-50 disabled:cursor-not-allowed"
 						>
