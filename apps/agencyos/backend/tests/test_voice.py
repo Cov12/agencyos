@@ -4,9 +4,10 @@ from datetime import datetime, timedelta, timezone
 from uuid import UUID
 
 import pytest
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import AsyncMock, MagicMock
 
 from apps.agencyos.backend.services.voice_session import VoiceSessionManager
+from apps.agencyos.backend.routers import voice
 
 
 class TestVoiceSessionManager:
@@ -138,3 +139,83 @@ class TestVoiceSessionManager:
         assert stats["total_active"] == 2
         assert stats["by_org"] == {"org_acme": 2}
         assert stats["avg_turns_per_session"] == 1.5
+
+
+class TestVoiceRouterChatIdThreading:
+    def test_message_chat_id_prefers_payload_over_socket_query(self) -> None:
+        assert (
+            voice._message_chat_id({"chat_id": " chat-from-payload "}, "chat-from-query")
+            == "chat-from-payload"
+        )
+
+    def test_message_chat_id_accepts_camel_case_and_fallback(self) -> None:
+        assert voice._message_chat_id({"chatId": "chat-camel"}) == "chat-camel"
+        assert voice._message_chat_id({}, "chat-from-query") == "chat-from-query"
+        assert voice._message_chat_id({"chat_id": "   "}, None) is None
+
+    @pytest.mark.asyncio
+    async def test_route_message_passes_chat_id_to_orchestrator(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        db = MagicMock()
+        db_gen_closed = False
+
+        def db_gen():
+            nonlocal db_gen_closed
+            yield db
+            db_gen_closed = True
+
+        monkeypatch.setattr(voice, "get_session", db_gen)
+
+        orchestrator = MagicMock()
+        orchestrator.route_message = AsyncMock(return_value={"content": "reply"})
+
+        result = await voice._route_message(
+            orchestrator=orchestrator,
+            message="voice transcript",
+            org_id="org_smoke",
+            user_id="user_smoke",
+            department_slug="chief",
+            conversation_history=[{"role": "user", "content": "voice transcript"}],
+            chat_id="persisted-open-webui-chat",
+        )
+
+        assert result == {"content": "reply"}
+        orchestrator.route_message.assert_awaited_once_with(
+            message="voice transcript",
+            org_id="org_smoke",
+            user_id="user_smoke",
+            department_slug=None,
+            chat_id="persisted-open-webui-chat",
+            db=db,
+            conversation_history=[{"role": "user", "content": "voice transcript"}],
+        )
+        db.close.assert_called_once()
+        assert db_gen_closed is True
+
+    @pytest.mark.asyncio
+    async def test_route_message_allows_missing_chat_id_for_new_voice_chat(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        db = MagicMock()
+
+        def db_gen():
+            yield db
+
+        monkeypatch.setattr(voice, "get_session", db_gen)
+
+        orchestrator = MagicMock()
+        orchestrator.route_message = AsyncMock(return_value={"content": "reply"})
+
+        await voice._route_message(
+            orchestrator=orchestrator,
+            message="new voice chat",
+            org_id="org_smoke",
+            user_id="user_smoke",
+            department_slug="sales",
+            conversation_history=[],
+        )
+
+        call = orchestrator.route_message.await_args.kwargs
+        assert call["department_slug"] == "sales"
+        assert call["chat_id"] is None
