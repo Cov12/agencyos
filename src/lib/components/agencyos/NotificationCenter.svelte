@@ -2,10 +2,15 @@
 	import { notifications, unreadCount, type Notification, activeOrgId } from '$lib/stores/agencyos';
 	import { user } from '$lib/stores';
 	import { getProposals, type Proposal } from '$lib/apis/agencyos';
-	import { onMount } from 'svelte';
+	import { createEventDispatcher, onMount } from 'svelte';
 	import GlassPanel from '$lib/components/agencyos/shared/GlassPanel.svelte';
 	import MaterialIcon from '$lib/components/agencyos/shared/MaterialIcon.svelte';
 	import StatusBadge from '$lib/components/agencyos/shared/StatusBadge.svelte';
+
+	/** Hide the ✕ when the panel is a full page rather than a dismissible drawer. */
+	export let showClose = true;
+
+	const dispatch = createEventDispatcher<{ close: void }>();
 
 	let isLoading = false;
 
@@ -93,14 +98,28 @@
 					</span>
 				{/if}
 			</div>
-			<button
-				class="group flex items-center gap-1 sm:gap-1.5 md:gap-2 rounded-lg md:rounded-xl px-2 sm:px-2.5 md:px-3 py-1 sm:py-1.5 md:py-2 text-xs md:text-sm font-medium text-slate-400 transition hover:bg-white/5 hover:text-white"
-				on:click={markAllRead}
-				disabled={isLoading}
-			>
-				<MaterialIcon icon="check_circle" size={14} />
-				<span>Clear All</span>
-			</button>
+			<div class="flex items-center gap-1 sm:gap-1.5 md:gap-2 shrink-0">
+				<button
+					class="group flex items-center gap-1 sm:gap-1.5 md:gap-2 rounded-lg md:rounded-xl px-2 sm:px-2.5 md:px-3 py-1 sm:py-1.5 md:py-2 text-xs md:text-sm font-medium text-slate-400 transition hover:bg-white/5 hover:text-white"
+					on:click={markAllRead}
+					disabled={isLoading}
+				>
+					<MaterialIcon icon="check_circle" size={14} />
+					<span>Clear All</span>
+				</button>
+				{#if showClose}
+					<button
+						type="button"
+						data-testid="notification-center-close"
+						aria-label="Close notifications"
+						title="Close notifications"
+						class="flex h-10 w-10 min-h-[40px] min-w-[40px] shrink-0 items-center justify-center rounded-lg md:rounded-xl text-slate-400 transition hover:bg-white/5 hover:text-white"
+						on:click={() => dispatch('close')}
+					>
+						<MaterialIcon icon="close" size={20} />
+					</button>
+				{/if}
+			</div>
 		</div>
 
 		<!-- Scrollable Content -->

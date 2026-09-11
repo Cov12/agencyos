@@ -3,13 +3,26 @@
 	import VoiceMode from '$lib/components/agencyos/VoiceMode.svelte';
 	import MaterialIcon from '$lib/components/agencyos/shared/MaterialIcon.svelte';
 	import { user } from '$lib/stores';
-	import { activeDeptId, activeDept, activeOrgId, departments } from '$lib/stores/agencyos';
-	import { getEmployeeTabs, type EmployeeTab } from '$lib/apis/agencyos';
+	import {
+		activeDeptId,
+		activeDept,
+		activeOrg,
+		activeOrgId,
+		departments
+	} from '$lib/stores/agencyos';
+	import {
+		getEmployeeTabs,
+		getOrgSubAccounts,
+		type EmployeeTab,
+		type OrgSubAccount
+	} from '$lib/apis/agencyos';
 
 	let employeeTabs: EmployeeTab[] = [];
 	let selectedEmployee: EmployeeTab | null = null;
 	let loadingTabs = false;
 	let selectorOpen = false;
+	let subAccounts: OrgSubAccount[] = [];
+	let activeSubAccountId: string | null = null;
 
 	// Dynamic targets: Chief + departments + employees
 	$: targets = [
@@ -30,11 +43,30 @@
 		}))
 	];
 
-	$: currentTargetName = selectedEmployee?.agent_name ?? $activeDept?.name ?? 'Chief AI';
+	// Which CLIENT (sub-account) the user is scoped to; null = business scope.
+	$: activeSubAccountName = subAccounts.find((s) => s.id === activeSubAccountId)?.name ?? null;
+	$: scopeDisplayName = activeSubAccountName ?? $activeOrg?.name ?? 'Business';
+	$: currentTargetName =
+		activeSubAccountName ?? selectedEmployee?.agent_name ?? $activeDept?.name ?? 'Chief AI';
 
 	onMount(async () => {
-		await loadEmployeeTabs();
+		await Promise.all([loadEmployeeTabs(), loadSubAccounts()]);
 	});
+
+	async function loadSubAccounts() {
+		const authToken = (($user as { token?: string } | undefined)?.token ?? localStorage.token) as
+			| string
+			| undefined;
+		if (!authToken || !$activeOrgId) return;
+
+		try {
+			const response = await getOrgSubAccounts(authToken, $activeOrgId);
+			subAccounts = response.subAccounts;
+			activeSubAccountId = response.activeSubAccountId;
+		} catch (error) {
+			console.error('Failed to load sub-accounts', error);
+		}
+	}
 
 	async function loadEmployeeTabs() {
 		const authToken = (($user as { token?: string } | undefined)?.token ?? localStorage.token) as string | undefined;
@@ -158,4 +190,4 @@
 	></button>
 {/if}
 
-<VoiceMode {selectedEmployee} />
+<VoiceMode {selectedEmployee} subAccountName={scopeDisplayName} />

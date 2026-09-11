@@ -5,6 +5,7 @@
 		activeDept,
 		proposals,
 		type Proposal,
+		activeOrg,
 		activeOrgId
 	} from '$lib/stores/agencyos';
 	import { chats as openWebUIChats, user } from '$lib/stores';
@@ -325,8 +326,16 @@
 		}
 	}
 
-	// Derived chat target info
+	// Derived chat target info. `chatTargetName` is the AGENT identity — it is what
+	// gets persisted as the message persona / metadata agent_name, so it must not
+	// pick up the sub-account name.
 	$: chatTargetName = selectedEmployee?.agent_name ?? $activeDept?.name ?? 'WBIT Assistant';
+	// Which CLIENT (sub-account) the user is scoped to. Null = business scope, in
+	// which case we show the business/org name.
+	$: activeSubAccountName = subAccounts.find((s) => s.id === activeSubAccountId)?.name ?? null;
+	$: scopeDisplayName = activeSubAccountName ?? $activeOrg?.name ?? 'Business';
+	// Header / target label prefers the client we are scoped to over the agent name.
+	$: chatTargetDisplayName = activeSubAccountName ?? chatTargetName;
 	$: chatTargetIcon =
 		selectedEmployee?.agent_icon ??
 		(personas.find((p) => p.id === $activeDeptId)?.icon || 'psychology');
@@ -579,8 +588,12 @@
 		sendMessage();
 	}
 
-	$: currentPersonaLabel = chatTargetName;
-	$: placeholder = loading ? `Waiting for ${chatTargetName}...` : `Message ${chatTargetName}...`;
+	$: currentPersonaLabel = chatTargetDisplayName;
+	// Composer placeholder names the ASSISTANT you're messaging, not the client
+	// scope — "Message <client>" reads like messaging the contact in a CRM.
+	$: placeholder = loading
+		? `Waiting for ${chatTargetName}...`
+		: `Message ${chatTargetName}...`;
 
 	// Department colors for avatar backgrounds
 	const DEPT_COLORS: Record<string, string> = {
@@ -1019,6 +1032,7 @@
 	<VoiceMode
 		onDismiss={() => (voiceModeOpen = false)}
 		{selectedEmployee}
+		subAccountName={scopeDisplayName}
 		{chatId}
 		ensureChat={ensureVoiceChat}
 		onPersistTurn={persistVoiceTurn}

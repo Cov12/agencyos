@@ -19,6 +19,12 @@
 		department: string;
 		agent_icon?: string;
 	} | null = null;
+	/**
+	 * Display name of the sub-account (client) the user is currently scoped to.
+	 * Null means business scope, in which case we fall back to the employee /
+	 * department / Chief AI name as before.
+	 */
+	export let subAccountName: string | null = null;
 	export let chatId: string | undefined = undefined;
 	export let ensureChat: (() => Promise<string | null>) | undefined = undefined;
 	export let onPersistTurn:
@@ -26,6 +32,7 @@
 		| undefined = undefined;
 
 	type ConnectionState = 'connected' | 'connecting' | 'disconnected';
+	type VoiceErrorKind = 'tts' | 'stt' | 'connection' | 'mic' | 'auth' | 'generic';
 
 	interface VoiceTurn {
 		role: 'user' | 'ai';
@@ -45,12 +52,96 @@
 	let lastTranscription = '';
 	let lastResponse = '';
 	let errorMessage = '';
+	let errorKind: VoiceErrorKind = 'generic';
 	let abortProcessing = false;
 	let micFailed = false;
 	let textInput = '';
 	let pendingTranscription = '';
 
 	const MAX_RECONNECT_ATTEMPTS = 3;
+
+	/**
+	 * Friendly error copy. Raw backend text (URLs, HTTP status codes, stack traces)
+	 * never reaches the UI — it only goes to console.error for debugging.
+	 */
+	const VOICE_ERROR_COPY: Record<VoiceErrorKind, string> = {
+		tts: "Voice reply couldn't be played. The text answer is still shown above.",
+		stt: "Couldn't hear that clearly — please try again.",
+		connection: 'Voice connection lost. Please try again.',
+		mic: 'Microphone access is blocked. Enable mic permissions, or type your message below.',
+		auth: 'Your session expired. Please sign in again to use voice.',
+		generic: 'Something went wrong with voice. Please try again.'
+	};
+
+	function classifyVoiceError(raw: string): VoiceErrorKind {
+		const text = raw.toLowerCase();
+
+		// STT markers are checked before TTS because "speech-to-text" / "speech
+		// recognition" also contain the substring "speech".
+		if (
+			text.includes('transcri') ||
+			text.includes('stt') ||
+			text.includes('whisper') ||
+			text.includes('speech-to-text') ||
+			text.includes('speech_to_text') ||
+			text.includes('speech recognition')
+		)
+			return 'stt';
+
+		if (
+			text.includes('tts') ||
+			text.includes('speech') ||
+			text.includes('audio/speech') ||
+			text.includes('audio playback')
+		)
+			return 'tts';
+
+		if (
+			text.includes('websocket') ||
+			text.includes('connection') ||
+			text.includes('connect') ||
+			text.includes('disconnect') ||
+			text.includes('network') ||
+			text.includes('offline')
+		)
+			return 'connection';
+
+		if (text.includes('microphone') || text.includes('getusermedia') || text.includes('notallowed'))
+			return 'mic';
+
+		if (
+			text.includes('auth token') ||
+			text.includes('unauthorized') ||
+			text.includes('sign in') ||
+			text.includes('organization context')
+		)
+			return 'auth';
+
+		return 'generic';
+	}
+
+	/**
+	 * Classify a raw error, surface friendly copy, and keep the raw text in the
+	 * console only. Returns the classification so callers can decide whether the
+	 * failure is fatal (a TTS-only failure is not — the text reply still stands).
+	 */
+	function reportVoiceError(rawError: unknown, context = 'Voice error'): VoiceErrorKind {
+		console.error(context, rawError);
+		const raw = rawError instanceof Error ? rawError.message : String(rawError ?? '');
+		errorKind = classifyVoiceError(raw);
+		errorMessage = VOICE_ERROR_COPY[errorKind];
+		return errorKind;
+	}
+
+	function setFriendlyError(kind: VoiceErrorKind) {
+		errorKind = kind;
+		errorMessage = VOICE_ERROR_COPY[kind];
+	}
+
+	function clearVoiceError() {
+		errorMessage = '';
+		errorKind = 'generic';
+	}
 
 	const stateTitles: Record<string, string> = {
 		idle: 'Tap to speak',
@@ -61,8 +152,11 @@
 		error: 'Voice unavailable'
 	};
 
-	// Use selected employee name if available, otherwise fall back to department
-	$: targetName = selectedEmployee?.agent_name ?? $activeDept?.name ?? 'Chief AI';
+	// Who is answering: selected employee, else department, else Chief AI. Used for
+	// transcript speaker labels, where the sub-account name would be wrong.
+	$: agentName = selectedEmployee?.agent_name ?? $activeDept?.name ?? 'Chief AI';
+	// Header label: which CLIENT (sub-account) the user is scoped to, when known.
+	$: targetName = subAccountName ?? agentName;
 	$: statusText = stateTitles[$voiceStateStore] ?? 'Tap to speak';
 	$: subtitle = selectedEmployee
 		? `${selectedEmployee.agent_name} (${selectedEmployee.department})`
@@ -136,7 +230,7 @@
 						connectWebSocket();
 					}, delay);
 				} else if (!manualDisconnect) {
-					errorMessage = 'Voice connection lost. Please try again.';
+					setFriendlyError('connection');
 					setVoiceState('error');
 				}
 			};
@@ -145,7 +239,7 @@
 				connectionState = 'disconnected';
 			};
 		} catch (error) {
-			errorMessage = error instanceof Error ? error.message : 'Failed to connect voice channel.';
+			reportVoiceError(error, 'Failed to open voice channel');
 			connectionState = 'disconnected';
 			setVoiceState('error');
 		}
@@ -174,7 +268,7 @@
 
 	function sendWsMessage(payload: Record<string, unknown>) {
 		if (!ws || ws.readyState !== WebSocket.OPEN) {
-			errorMessage = 'Voice channel is not connected yet.';
+			setFriendlyError('connection');
 			return false;
 		}
 		ws.send(JSON.stringify(payload));
@@ -206,13 +300,14 @@
 		if ($voiceStateStore === 'processing' || $voiceStateStore === 'connecting') return;
 
 		stopSpeaking();
-		errorMessage = '';
+		clearVoiceError();
 		lastTranscription = '';
 		abortProcessing = false;
 
 		if (!ws || ws.readyState !== WebSocket.OPEN) {
 			connectWebSocket();
-			errorMessage = 'Reconnecting voice channel. Try again in a moment.';
+			errorMessage = 'Reconnecting…';
+			errorKind = 'connection';
 			return;
 		}
 
@@ -244,8 +339,7 @@
 							});
 						})
 						.catch((error) => {
-							errorMessage =
-								error instanceof Error ? error.message : 'Failed to prepare voice chat.';
+							reportVoiceError(error, 'Failed to prepare voice chat');
 							setVoiceState('error');
 						});
 				} else {
@@ -258,10 +352,8 @@
 			setVoiceState('listening');
 		} catch (error) {
 			micFailed = true;
-			errorMessage =
-				error instanceof Error
-					? error.message
-					: 'Microphone access failed. Please allow microphone permissions.';
+			console.error('Microphone unavailable', error);
+			setFriendlyError('mic');
 			setVoiceState('idle');
 		}
 	}
@@ -321,10 +413,12 @@
 			setVoiceState('idle');
 		};
 
-		audio.onerror = () => {
+		audio.onerror = (event) => {
 			URL.revokeObjectURL(audioUrl);
 			if (currentAudio === audio) currentAudio = null;
-			errorMessage = 'Audio playback failed.';
+			// Playback failure is TTS-only: the text answer above still stands.
+			console.error('Voice audio playback failed', event);
+			setFriendlyError('tts');
 			setVoiceState('idle');
 		};
 
@@ -345,7 +439,7 @@
 			if (!text) return;
 			lastTranscription = text;
 			pendingTranscription = text;
-			addVoiceTurn('user', text, targetName);
+			addVoiceTurn('user', text, agentName);
 			conversationHistory = [...conversationHistory, { role: 'user', text, timestamp: Date.now() }];
 			return;
 		}
@@ -354,7 +448,7 @@
 			const text = String(payload?.text ?? payload?.content ?? '').trim();
 			if (!text) return;
 			lastResponse = text;
-			addVoiceTurn('ai', text, targetName);
+			addVoiceTurn('ai', text, agentName);
 			conversationHistory = [...conversationHistory, { role: 'ai', text, timestamp: Date.now() }];
 			if (pendingTranscription && onPersistTurn) {
 				const transcription = pendingTranscription;
@@ -366,6 +460,7 @@
 				}).catch((error) => {
 					console.error('Failed to persist voice turn', error);
 					errorMessage = 'Voice response was not saved to chat history.';
+					errorKind = 'generic';
 				});
 			}
 			if (get(voiceConfig).autoPlayResponse === false) {
@@ -385,8 +480,14 @@
 		}
 
 		if (type === 'error') {
-			errorMessage = String(payload?.message ?? 'Voice processing failed.');
-			setVoiceState('error');
+			const kind = reportVoiceError(payload?.message ?? '', 'Voice backend error');
+			if (kind === 'tts') {
+				// TTS-only failure is non-fatal: keep the transcript and the text reply
+				// on screen instead of dropping into the "Voice unavailable" state.
+				if ($voiceStateStore !== 'listening') setVoiceState('idle');
+			} else {
+				setVoiceState('error');
+			}
 			return;
 		}
 
@@ -399,7 +500,7 @@
 	async function submitTextFallback() {
 		const content = textInput.trim();
 		if (!content) return;
-		errorMessage = '';
+		clearVoiceError();
 		lastTranscription = content;
 		pendingTranscription = content;
 		setVoiceState('processing');
@@ -416,7 +517,7 @@
 			}
 			textInput = '';
 		} catch (error) {
-			errorMessage = error instanceof Error ? error.message : 'Failed to prepare voice chat.';
+			reportVoiceError(error, 'Failed to prepare voice chat');
 			setVoiceState('error');
 		}
 	}
@@ -453,9 +554,12 @@
 <svelte:window on:keydown={handleKeydown} />
 
 <div
-	class="absolute inset-0 z-50 flex flex-col items-center justify-center bg-black/40 backdrop-blur-xl px-4"
+	class="absolute inset-0 z-50 flex flex-col items-center justify-start overflow-y-auto bg-black/40 backdrop-blur-xl px-4 py-6 sm:py-0 pb-[calc(1.5rem+env(safe-area-inset-bottom))] sm:pb-0"
 >
-	<div class="flex flex-col items-center justify-center w-full max-w-2xl relative">
+	<!-- `sm:my-auto` keeps the desktop layout vertically centred without clipping the
+	     top of the panel when it is taller than the viewport. On mobile everything
+	     (transcript, error banner, controls) stacks in normal flow and scrolls. -->
+	<div class="flex flex-col items-center justify-center w-full max-w-2xl relative sm:my-auto">
 		<div
 			class="text-xs sm:text-sm text-[#20B2AA]/90 tracking-wide uppercase mb-4 sm:mb-6 px-3 py-1.5 rounded-full border border-[#20B2AA]/25 bg-[#1c1c21]/70 backdrop-blur-md flex items-center gap-2"
 		>
@@ -560,7 +664,11 @@
 
 		{#if errorMessage}
 			<p
-				class="mt-4 text-sm text-rose-300 bg-rose-500/10 border border-rose-300/20 rounded-xl px-3 py-2 max-w-xl text-center"
+				role="status"
+				class="mt-4 w-full max-w-xl text-sm rounded-xl px-3 py-2 text-center border {errorKind ===
+				'tts'
+					? 'text-amber-200 bg-amber-500/10 border-amber-300/20'
+					: 'text-rose-300 bg-rose-500/10 border-rose-300/20'}"
 			>
 				{errorMessage}
 			</p>
@@ -594,7 +702,7 @@
 						class="text-xs sm:text-sm rounded-xl px-3 py-2 border border-white/10 bg-white/[0.03] text-white/70"
 					>
 						<span class="uppercase tracking-wide text-[10px] text-white/40 mr-2"
-							>{turn.role === 'user' ? 'You' : targetName}</span
+							>{turn.role === 'user' ? 'You' : agentName}</span
 						>
 						{turn.text}
 					</div>
@@ -605,7 +713,7 @@
 
 	<!-- Controls -->
 	<div
-		class="absolute bottom-8 sm:bottom-12 flex items-center gap-3 sm:gap-4 flex-wrap justify-center px-4"
+		class="relative mt-6 mb-2 flex items-center gap-3 sm:gap-4 flex-wrap justify-center px-4 sm:absolute sm:bottom-12 sm:mt-0 sm:mb-0"
 	>
 		{#if $voiceStateStore === 'idle' || $voiceStateStore === 'error'}
 			<button
