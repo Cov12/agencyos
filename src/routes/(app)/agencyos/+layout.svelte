@@ -237,7 +237,7 @@
 					aria-label="Close notifications"
 				></button>
 				<div class="fixed top-0 right-0 z-40 h-full w-full max-w-md shadow-2xl shadow-black/50 border-l border-white/5 bg-[#0f0f13] overflow-y-auto">
-					<NotificationCenter />
+					<NotificationCenter on:close={() => (notificationPanelOpen = false)} />
 				</div>
 			{/if}
 
