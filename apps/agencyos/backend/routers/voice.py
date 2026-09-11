@@ -165,6 +165,20 @@ async def _synthesize_speech(client: httpx.AsyncClient, content: str, token: str
     return base64.b64encode(resp.content).decode("utf-8")
 
 
+def _message_chat_id(message: dict[str, Any], fallback_chat_id: str | None = None) -> str | None:
+    """Resolve the Open WebUI chat id for a voice turn.
+
+    VoiceMode sends the persisted chat id on the WebSocket URL and repeats it on
+    payloads after a chat is created. Prefer the per-message value so reconnects
+    and first-turn chat creation can advance the active thread without opening a
+    new socket.
+    """
+    value = message.get("chat_id") or message.get("chatId") or fallback_chat_id
+    if isinstance(value, str):
+        value = value.strip()
+    return value or None
+
+
 async def _route_message(
     orchestrator: Orchestrator,
     message: str,
@@ -172,6 +186,7 @@ async def _route_message(
     user_id: str,
     department_slug: str,
     conversation_history: list[dict[str, str]],
+    chat_id: str | None = None,
 ) -> dict[str, Any]:
     """Route a message through the AgencyOS orchestrator."""
     db_gen = get_session()
@@ -182,6 +197,7 @@ async def _route_message(
             org_id=org_id,
             user_id=user_id,
             department_slug=department_slug if department_slug != "chief" else None,
+            chat_id=chat_id,
             db=db,
             conversation_history=conversation_history,
         )
@@ -217,6 +233,7 @@ async def voice_ws(websocket: WebSocket) -> None:
     token = websocket.query_params.get("token", "")
     org_id = websocket.query_params.get("org_id", "")
     department_slug = websocket.query_params.get("department_slug", "chief") or "chief"
+    current_chat_id = _message_chat_id({}, websocket.query_params.get("chat_id"))
 
     if not token:
         await _send_error(websocket, "Missing token")
@@ -264,6 +281,7 @@ async def voice_ws(websocket: WebSocket) -> None:
                     continue
 
                 msg_type = message.get("type")
+                current_chat_id = _message_chat_id(message, current_chat_id)
 
                 if msg_type == "ping":
                     await websocket.send_json({"type": "pong"})
@@ -312,6 +330,7 @@ async def voice_ws(websocket: WebSocket) -> None:
                             user_id=str(user_id),
                             department_slug=department_slug,
                             conversation_history=conversation_history,
+                            chat_id=current_chat_id,
                         )
                     except Exception as exc:
                         logger.exception("Orchestrator route failed")
@@ -364,6 +383,7 @@ async def voice_ws(websocket: WebSocket) -> None:
                             user_id=str(user_id),
                             department_slug=department_slug,
                             conversation_history=conversation_history,
+                            chat_id=current_chat_id,
                         )
                     except Exception as exc:
                         logger.exception("Orchestrator route failed")
