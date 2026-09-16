@@ -5,7 +5,7 @@
 	import fileSaver from 'file-saver';
 	const { saveAs } = fileSaver;
 
-	import { goto } from '$app/navigation';
+	import { afterNavigate, goto } from '$app/navigation';
 	import { page } from '$app/stores';
 
 	import { getModels, getToolServersData } from '$lib/apis';
@@ -134,6 +134,30 @@
 		tools.set(toolsData);
 	};
 
+	// #93 — Tenant routing lockdown: tenants live entirely inside /agencyos, so any non-admin
+	// who lands on a raw Open WebUI route in this group (/, /c, /workspace, /playground,
+	// /channels, /notes, /home) is sent back to /agencyos. The owner/admin keeps the raw shell
+	// and /admin for configuration and is never redirected.
+	// This mirrors the client-side gate used by src/routes/(app)/admin/+layout.svelte — it is a
+	// product-surface/UX guard, NOT a server-side security boundary.
+	const enforceTenantSurface = () => {
+		if (!$user || $user?.role === 'admin') {
+			return;
+		}
+
+		if ($page.url.pathname.startsWith('/agencyos')) {
+			// Already on the tenant surface — nothing to do (avoids a redirect loop).
+			return;
+		}
+
+		goto('/agencyos');
+	};
+
+	// Runs on the initial load and on every client-side (SPA) navigation.
+	afterNavigate(() => {
+		enforceTenantSurface();
+	});
+
 	onMount(async () => {
 		if ($user === undefined || $user === null) {
 			await goto('/auth');
@@ -142,6 +166,10 @@
 		if (!['user', 'admin'].includes($user?.role)) {
 			return;
 		}
+
+		// #93 — belt and suspenders: afterNavigate is the primary guard, this covers a cold
+		// mount where the store settles after the first navigation callback has already run.
+		enforceTenantSurface();
 
 		clearChatInputStorage();
 		await Promise.all([
@@ -180,9 +208,15 @@
 			return true;
 		};
 
+		// #93 — Tenant routing lockdown: the raw Open WebUI settings modal, search palette and
+		// shortcuts overlay are not part of the tenant surface, so the global shortcuts that open
+		// them are inert under /agencyos. Every other keybinding is left alone.
+		const onTenantSurface = () => $page.url.pathname.startsWith('/agencyos');
+
 		const setupKeyboardShortcuts = () => {
 			document.addEventListener('keydown', async (event) => {
 				if (isShortcutMatch(event, shortcuts[Shortcut.SEARCH])) {
+					if (onTenantSurface()) return;
 					console.log('Shortcut triggered: SEARCH');
 					event.preventDefault();
 					showSearch.set(!$showSearch);
@@ -211,10 +245,12 @@
 					event.preventDefault();
 					document.getElementById('delete-chat-button')?.click();
 				} else if (isShortcutMatch(event, shortcuts[Shortcut.OPEN_SETTINGS])) {
+					if (onTenantSurface()) return;
 					console.log('Shortcut triggered: OPEN_SETTINGS');
 					event.preventDefault();
 					showSettings.set(!$showSettings);
 				} else if (isShortcutMatch(event, shortcuts[Shortcut.SHOW_SHORTCUTS])) {
+					if (onTenantSurface()) return;
 					console.log('Shortcut triggered: SHOW_SHORTCUTS');
 					event.preventDefault();
 					showShortcuts.set(!$showShortcuts);
@@ -271,7 +307,9 @@
 	});
 </script>
 
-<SettingsModal bind:show={$showSettings} />
+{#if !$page.url.pathname.startsWith('/agencyos')}
+	<SettingsModal bind:show={$showSettings} />
+{/if}
 <ChangelogModal bind:show={$showChangelog} />
 
 {#if $user}
