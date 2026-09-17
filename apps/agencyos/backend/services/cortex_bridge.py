@@ -535,3 +535,89 @@ async def fetch_history(
 
     runs = data.get("runs") if isinstance(data, dict) else None
     return runs if isinstance(runs, list) else []
+
+
+# --- write: seed Contexta (mem0) long-term memory ----------------------------
+
+def _contexta_seed_url() -> str:
+    """Cortex CORE route (not a plugin verb): POST {cortex-origin}/api/bridge/contexta-seed,
+    authed by the same x-wbit-bridge-secret as /chat. Derived from the bridge URL's origin
+    exactly like _ensure_agent_url(), so one env (CORTEX_BRIDGE_URL) keeps driving every
+    core verb; override with CORTEX_CONTEXTA_SEED_URL."""
+    override = os.environ.get("CORTEX_CONTEXTA_SEED_URL", "").strip()
+    if override:
+        return override
+    m = re.match(r"^(https?://[^/]+)", _bridge_url())
+    origin = m.group(1) if m else _bridge_url().rstrip("/")
+    return origin + "/api/bridge/contexta-seed"
+
+
+async def seed_contexta(
+    db: Optional[Session],
+    org_id: Optional[str],
+    facts: list,
+    sub_account_id: Optional[str] = None,
+) -> dict:
+    """Seed onboarding facts into the org's Contexta (mem0) long-term memory via Cortex.
+
+    Resolves companyId the SAME way chat does (_resolve_company_for_chat), then POSTs
+    {companyId, subAccountId?, facts} to the contexta-seed core route with the shared
+    x-wbit-bridge-secret. `facts` entries are plain strings or {fact, kind, confidence}
+    objects — passed through as given; Cortex/Hermes owns the memory write.
+
+    subAccountId is OMITTED when None → Hermes stores at company/business scope
+    (companyId:_business), matching how /chat scopes memory. The parameter exists so
+    per-sub-account seeding is a later drop-in; P1 only wires the org-level flow.
+
+    NON-FATAL by contract — onboarding must never fail because seeding did. Missing
+    secret, no facts, timeout, transport error, non-2xx, or a non-JSON body all return
+    {ok: False, error: ...} with a warning logged; it NEVER raises into the caller.
+    Returns {ok: True, **hermesResult} on success so callers can record what landed.
+    """
+    secret = _bridge_secret()
+    if not secret:
+        logger.warning("cortex_bridge: contexta-seed skipped — WBIT_BRIDGE_SECRET not configured")
+        return {"ok": False, "error": "WBIT_BRIDGE_SECRET not configured"}
+
+    if not facts:
+        return {"ok": False, "error": "no facts to seed"}
+
+    company_id = _resolve_company_for_chat(db, org_id)
+    if not company_id:
+        logger.warning("cortex_bridge: contexta-seed skipped — no company resolved")
+        return {"ok": False, "error": "no company resolved for org"}
+
+    body: dict = {"companyId": company_id, "facts": facts}
+    if sub_account_id:
+        body["subAccountId"] = sub_account_id
+
+    headers = {"Content-Type": "application/json", "x-wbit-bridge-secret": secret}
+
+    try:
+        async with httpx.AsyncClient(timeout=_timeout_s()) as client:
+            resp = await client.post(_contexta_seed_url(), json=body, headers=headers)
+    except httpx.TimeoutException:
+        logger.warning("cortex_bridge: contexta-seed request timed out")
+        return {"ok": False, "error": "contexta-seed request timed out"}
+    except httpx.RequestError as e:
+        logger.warning(f"cortex_bridge: contexta-seed request error: {e}")
+        return {"ok": False, "error": f"contexta-seed request error: {e}"}
+    except Exception as e:  # defensive: seeding must never break onboarding
+        logger.warning(f"cortex_bridge: contexta-seed unexpected error: {e}")
+        return {"ok": False, "error": f"contexta-seed unexpected error: {e}"}
+
+    if resp.status_code not in (200, 201):
+        logger.warning(f"cortex_bridge: contexta-seed returned {resp.status_code}")
+        return {
+            "ok": False,
+            "error": f"contexta-seed returned {resp.status_code}",
+            "status_code": resp.status_code,
+        }
+
+    try:
+        data = resp.json()
+    except ValueError:
+        logger.warning("cortex_bridge: contexta-seed returned non-JSON body")
+        return {"ok": False, "error": "contexta-seed returned non-JSON body"}
+
+    return {"ok": True, **(data if isinstance(data, dict) else {"result": data})}

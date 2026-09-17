@@ -1,12 +1,55 @@
 <script lang="ts">
 	import { onDestroy } from 'svelte';
 	import { goto } from '$app/navigation';
-	import { onboardingComplete } from '$lib/stores/agencyos';
+	import { user } from '$lib/stores';
+	import { activeOrgId, onboardingComplete } from '$lib/stores/agencyos';
+	import { getOnboardingState } from '$lib/apis/agencyos';
 	import GlassPanel from '$lib/components/agencyos/shared/GlassPanel.svelte';
 	import MaterialIcon from '$lib/components/agencyos/shared/MaterialIcon.svelte';
 
 	let currentTime = '';
 	let currentDate = '';
+	let unlocking = false;
+
+	/** In-flight (or settled) backend gate check, resolving to `completed`. The old gate read
+	 * the ephemeral `$onboardingComplete` store, which was false on every reload — so a
+	 * returning customer was sent back through the wizard forever. The truth now lives in
+	 * org.settings.onboarding, read once per org. */
+	let gateCheck: Promise<boolean> | null = null;
+	let checkedOrgId = '';
+
+	function authToken(): string | undefined {
+		return (($user as { token?: string } | undefined)?.token ??
+			(typeof localStorage !== 'undefined' ? localStorage.token : undefined)) as
+			| string
+			| undefined;
+	}
+
+	async function fetchGate(orgId: string): Promise<boolean> {
+		const token = authToken();
+		// No token yet: the layout is still resolving auth. Treat as "can't tell" → app.
+		if (!token) return true;
+		try {
+			const state = await getOnboardingState(token, orgId);
+			const completed = Boolean(state?.completed);
+			onboardingComplete.set(completed);
+			return completed;
+		} catch (error) {
+			// Resilience over correctness here, deliberately: we must never hard-block. A
+			// network blip should not lock a returning customer out of their own workspace,
+			// and an un-onboarded user who slips through can still re-enter the wizard (the
+			// app works without onboarding — the assistant just starts cold).
+			console.error('Failed to read onboarding state', error);
+			return true;
+		}
+	}
+
+	// The org id arrives asynchronously from the /agencyos layout, so this is reactive
+	// rather than an onMount one-shot — otherwise the check would fire with an empty id.
+	$: if ($activeOrgId && $activeOrgId !== checkedOrgId) {
+		checkedOrgId = $activeOrgId;
+		gateCheck = fetchGate($activeOrgId);
+	}
 
 	function updateTime() {
 		const now = new Date();
@@ -14,11 +57,16 @@
 		currentDate = now.toLocaleDateString('en-US', { weekday: 'long', month: 'long', day: 'numeric' });
 	}
 
-	function unlock() {
-		if ($onboardingComplete) {
-			goto('/agencyos');
-		} else {
-			goto('/agencyos/onboarding/step1');
+	async function unlock() {
+		if (unlocking) return;
+		unlocking = true;
+		try {
+			// Awaiting the in-flight promise means an eager tap doesn't race the check; if no
+			// org resolved at all there is nothing to gate on, so fall through to the app.
+			const completed = gateCheck ? await gateCheck : true;
+			await goto(completed ? '/agencyos' : '/agencyos/onboarding/step1');
+		} finally {
+			unlocking = false;
 		}
 	}
 
@@ -73,14 +121,14 @@
 
 	<!-- Unlock -->
 	<footer class="mb-4 sm:mb-8 flex flex-col items-center gap-4 sm:gap-6 relative z-10">
-		<button class="relative group cursor-pointer" on:click={unlock} aria-label="Unlock">
+		<button class="relative group cursor-pointer disabled:cursor-wait" on:click={unlock} disabled={unlocking} aria-label="Unlock">
 			<div class="absolute -inset-1 rounded-full bg-[#6961ff]/20 blur-lg opacity-50 group-hover:opacity-100 transition duration-500 animate-pulse"></div>
 			<div class="relative flex h-16 w-16 items-center justify-center rounded-full bg-white/10 text-white backdrop-blur-md transition-all duration-300 hover:bg-white/20 hover:scale-105 active:scale-95 border border-white/10 ring-1 ring-white/20">
 				<MaterialIcon icon="fingerprint" size={32} />
 			</div>
 		</button>
-		<button class="group flex items-center gap-2 rounded-full px-5 sm:px-6 py-2.5 text-sm font-medium text-white transition-all hover:bg-white/10 bg-white/5 backdrop-blur-md border border-white/5 min-h-[44px]" on:click={unlock}>
-			<span class="group-hover:text-[#6961ff] transition-colors">Tap to Enter</span>
+		<button class="group flex items-center gap-2 rounded-full px-5 sm:px-6 py-2.5 text-sm font-medium text-white transition-all hover:bg-white/10 bg-white/5 backdrop-blur-md border border-white/5 min-h-[44px]" on:click={unlock} disabled={unlocking}>
+			<span class="group-hover:text-[#6961ff] transition-colors">{unlocking ? 'Entering…' : 'Tap to Enter'}</span>
 			<MaterialIcon icon="arrow_forward" size={16} class="text-white/50 group-hover:translate-x-1 group-hover:text-white transition-all" />
 		</button>
 	</footer>

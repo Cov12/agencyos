@@ -14,6 +14,7 @@ from fastapi import FastAPI
 from .routers.departments import router as departments_router
 from .routers.proposals import router as proposals_router
 from .routers.organizations import router as organizations_router
+from .routers.onboarding import router as onboarding_router
 from .routers.dashboard_workpipe import router as dashboard_workpipe_router
 from .routers.dashboard_cortex import router as dashboard_cortex_router
 from .routers.dashboard_drive import router as dashboard_drive_router
@@ -50,6 +51,7 @@ def mount_agencyos(app: FastAPI) -> None:
     # Mount API routers
     app.include_router(auth_callback_router)  # Portal SSO callback
     app.include_router(organizations_router)
+    app.include_router(onboarding_router)  # P1 onboarding capture + Contexta seed
     app.include_router(departments_router)
     app.include_router(proposals_router)
     app.include_router(cortex_approvals_router)  # Cortex approval inbox

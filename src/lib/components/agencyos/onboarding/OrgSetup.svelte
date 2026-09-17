@@ -2,10 +2,12 @@
 	import { goto } from '$app/navigation';
 	import GlassPanel from '$lib/components/agencyos/shared/GlassPanel.svelte';
 	import MaterialIcon from '$lib/components/agencyos/shared/MaterialIcon.svelte';
+	import { onboardingAnswers } from '$lib/stores/agencyos';
 
 	export let step: number;
 
-	let orgName = '';
+	// Seeded from the draft store so Back from the context step restores what was typed.
+	let orgName = $onboardingAnswers.orgName ?? '';
 	let industry = '';
 	let logoName = '';
 
@@ -17,12 +19,23 @@
 		{ value: 'other', label: 'Other' }
 	];
 
+	// The draft carries the LABEL (it becomes the seeded fact "Industry: Creative Agency",
+	// which has to read as prose to the assistant), so map back to the option value here.
+	industry =
+		industryOptions.find((option) => option.label === $onboardingAnswers.industry)?.value ?? '';
+
 	function onLogoSelected(event: Event) {
 		const target = event.target as HTMLInputElement;
 		logoName = target.files?.[0]?.name ?? '';
 	}
 
 	function continueStep() {
+		const industryLabel = industryOptions.find((option) => option.value === industry)?.label;
+		onboardingAnswers.update((answers) => ({
+			...answers,
+			orgName: orgName.trim(),
+			industry: industryLabel ?? ''
+		}));
 		goto('/agencyos/onboarding/step2');
 	}
 </script>

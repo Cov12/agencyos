@@ -2,6 +2,7 @@
  * AgencyOS Stores — Central state management
  */
 import { writable, derived } from 'svelte/store';
+import type { OnboardingAnswers } from '$lib/apis/agencyos';
 
 // ── Navigation & UI ──────────────────────────────────────────
 export const agencyNavCollapsed = writable(false);
@@ -66,8 +67,20 @@ export const activeDept = derived([departments, activeDeptId], ([$depts, $id]) =
 );
 
 // ── Onboarding ───────────────────────────────────────────────
+/** Mirror of the SERVER-side gate (org.settings.onboarding.completed), hydrated by
+ * LockScreen. Kept as a store so in-app surfaces can read it synchronously, but it is no
+ * longer the source of truth — GET /orgs/{id}/onboarding is. */
 export const onboardingComplete = writable(false);
 export const onboardingStep = writable(0);
+
+/** Draft answers while the wizard is in flight, shared across the step routes (each step
+ * is its own page, so a store is the only thing that survives the navigation). Durable
+ * storage is the backend: the final step POSTs these and they are persisted into
+ * org.settings + seeded into Contexta. */
+export const onboardingAnswers = writable<OnboardingAnswers>({});
+
+/** Reset the draft so a re-entered wizard never shows a previous run's answers. */
+export const resetOnboardingAnswers = () => onboardingAnswers.set({});
 
 // ── Organization Context ─────────────────────────────────────
 export interface OrgContext {
