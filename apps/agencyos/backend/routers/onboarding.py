@@ -17,9 +17,10 @@ later drop can retry.
 """
 
 import logging
-from typing import Optional
+from typing import Any, Optional
 
 from fastapi import APIRouter, Depends, HTTPException
+from fastapi.responses import JSONResponse
 from pydantic import BaseModel
 from sqlalchemy.orm import Session
 
@@ -41,6 +42,17 @@ ONBOARDING_VERSION = 1
 # Key holding the raw captured answers, kept so seeding can be retried later without
 # re-interviewing the user (P1 never retries; it just records enough to make that easy).
 ONBOARDING_PROFILE_KEY = "onboardingProfile"
+
+# Key holding the roster of specialist agents provisioned for this org (P2a). It is a
+# SIBLING of ONBOARDING_KEY, not a field inside it, on purpose: complete_onboarding
+# REPLACES settings[ONBOARDING_KEY] wholesale, so a roster nested there would be silently
+# dropped whenever the wizard completes after provisioning. A separate key makes the two
+# writes order-independent (the P2b wizard calls both).
+ONBOARDING_AGENTS_KEY = "onboardingAgents"
+
+# Defensive cap on one provisioning request. Cortex owns the canonical role taxonomy and
+# it is far smaller than this; the cap only stops an abusive payload from fanning out.
+_MAX_ROLES = 32
 
 # The FIXED P1 question set: answer key -> the fact label seeded into Contexta. Order is
 # the seeding order, so the memory reads top-down like a briefing. Adding a question means
@@ -199,3 +211,98 @@ async def complete_onboarding(
         "seeded": seeded,
         "factCount": len(facts),
     }
+
+
+# --- P2a: explicit specialist-agent provisioning -----------------------------
+
+
+class ProvisionAgentsRequest(BaseModel):
+    # Typed `Any`, not list[str], so a malformed payload lands on the explicit checks in
+    # _clean_roles() and answers 400 (pydantic would 422 it before the handler runs).
+    roles: Any = None
+
+
+def _clean_roles(raw: Any) -> list[str]:
+    """Validate and normalize the requested roles, or 400.
+
+    Deliberately taxonomy-AGNOSTIC: it only enforces shape (a non-empty list of non-blank
+    strings, deduped, order preserved, capped). WHICH roles are legal is Cortex's call —
+    it rejects unknown roles, `ceo` and `default` — so the canonical enum lives in exactly
+    one place instead of drifting between the two services.
+    """
+    if not isinstance(raw, list):
+        raise HTTPException(status_code=400, detail="roles must be a list of strings")
+
+    roles: list[str] = []
+    for entry in raw:
+        if not isinstance(entry, str):
+            raise HTTPException(status_code=400, detail="roles must be a list of strings")
+        role = entry.strip()
+        if not role:
+            continue
+        if role not in roles:  # dedupe, preserving the caller's order
+            roles.append(role)
+
+    if not roles:
+        raise HTTPException(status_code=400, detail="roles must not be empty")
+    if len(roles) > _MAX_ROLES:
+        raise HTTPException(
+            status_code=400, detail=f"too many roles (max {_MAX_ROLES})"
+        )
+    return roles
+
+
+@router.post("/{org_id}/onboarding/agents", dependencies=[Depends(require_org_access)])
+async def provision_onboarding_agents(
+    org_id: str,
+    data: ProvisionAgentsRequest,
+    db: Session = Depends(get_tenant_session),
+):
+    """Provision this org's specialist agents, one per canonical role.
+
+    Its own endpoint, NOT part of complete-onboarding: provisioning is explicit (the user
+    picked these roles) and its failure is meaningful, whereas completion must land even
+    when Cortex is down. The P2b wizard calls both.
+
+    Cortex is idempotent, so a re-submit returns the same roster with created:false.
+
+    Error mapping:
+      400 — bad shape here, or a role Cortex rejected (unknown / ceo / default), relayed
+            with Cortex's own message so the wizard can name the offending role;
+      502 — the bridge is unreachable, unconfigured, or failed (5xx / malformed body);
+      200 — {ok, agents: [{role, agentId, created}], roles}.
+    """
+    org = _get_org(db, org_id)
+    roles = _clean_roles(data.roles)
+
+    result = await cortex_bridge.ensure_department_agents(db, org_id, roles)
+
+    if not result.get("ok"):
+        error = result.get("error") or "agent provisioning failed"
+        status = result.get("status")
+        logger.warning(
+            "onboarding: agent provisioning failed for org %s (roles=%s, status=%s): %s",
+            org_id, roles, status, error,
+        )
+        # A Cortex 4xx is a REQUEST problem (an unrecognised role) — relay it as a 400 so
+        # the caller fixes the payload. Everything else is an upstream problem: 502.
+        if isinstance(status, int) and 400 <= status < 500:
+            raise HTTPException(status_code=400, detail=error)
+        return JSONResponse(status_code=502, content={"ok": False, "error": error})
+
+    agents = result.get("agents") or []
+
+    # Record the roster for later display (P2b). The JSON column is not mutation-tracked —
+    # assign a NEW dict, never mutate in place. Additive: every existing settings key,
+    # including P1's onboarding/onboardingProfile, is preserved.
+    current = org.settings if isinstance(org.settings, dict) else {}
+    updated = {**current}
+    updated[ONBOARDING_AGENTS_KEY] = {
+        "provisionedRoles": roles,
+        "agentsProvisionedAt": now_ms(),
+    }
+    org.settings = updated
+    org.updated_at = now_ms()
+    db.commit()
+
+    return {"ok": True, "agents": agents, "roles": roles}

@@ -621,3 +621,131 @@ async def seed_contexta(
         return {"ok": False, "error": "contexta-seed returned non-JSON body"}
 
     return {"ok": True, **(data if isinstance(data, dict) else {"result": data})}
+
+
+# --- write: provision a company's specialist agents (onboarding P2a) ---------
+
+def _ensure_department_agents_url() -> str:
+    """Cortex CORE route (not a plugin verb): POST
+    {cortex-origin}/api/bridge/ensure-department-agents, authed by the same
+    x-wbit-bridge-secret as /chat. Derived from the bridge URL's origin exactly like
+    _ensure_agent_url() / _contexta_seed_url(), so one env (CORTEX_BRIDGE_URL) keeps
+    driving every core verb; override with CORTEX_ENSURE_DEPT_AGENTS_URL."""
+    override = os.environ.get("CORTEX_ENSURE_DEPT_AGENTS_URL", "").strip()
+    if override:
+        return override
+    m = re.match(r"^(https?://[^/]+)", _bridge_url())
+    origin = m.group(1) if m else _bridge_url().rstrip("/")
+    return origin + "/api/bridge/ensure-department-agents"
+
+
+def _error_message(payload, fallback: str) -> str:
+    """Pull Cortex's own message out of an error body so the caller can relay it
+    verbatim (its 400s name the offending role). Falls back when the body is not a
+    dict or carries no recognised message key."""
+    if isinstance(payload, dict):
+        for key in ("error", "message", "detail"):
+            value = payload.get(key)
+            if isinstance(value, str) and value.strip():
+                return value.strip()
+    return fallback
+
+
+async def ensure_department_agents(
+    db: Optional[Session],
+    org_id: Optional[str],
+    roles: list,
+) -> dict:
+    """Provision one specialist agent per canonical role for this org's Cortex company.
+
+    Resolves companyId the SAME way chat does (_resolve_company_for_chat), then POSTs
+    {companyId, roles} to the ensure-department-agents core route with the shared
+    x-wbit-bridge-secret. Cortex is idempotent (re-calling returns the existing agents
+    with created:false) and owns the canonical role TAXONOMY — it rejects unknown roles,
+    `ceo` and `default` with a 400. We deliberately do NOT duplicate that enum here, so
+    the taxonomy lives in exactly one place.
+
+    UNLIKE seed_contexta, a failure here is MEANINGFUL: the user asked for agents and
+    got none, so failures are reported, never swallowed into a success. Returns
+    {ok: True, agents: [{role, agentId, created}, ...]} or
+    {ok: False, error: str, status: int | None}, where `status` is Cortex's HTTP status
+    when it answered (so the caller can relay a 4xx as a 400 and treat everything else
+    as a bad gateway) and None when the request never got an answer.
+
+    It still NEVER raises into the request path — every transport/parse failure is
+    returned as {ok: False}.
+    """
+    secret = _bridge_secret()
+    if not secret:
+        logger.warning(
+            "cortex_bridge: ensure-department-agents skipped — WBIT_BRIDGE_SECRET not configured"
+        )
+        return {"ok": False, "error": "WBIT_BRIDGE_SECRET not configured", "status": None}
+
+    if not roles:
+        return {"ok": False, "error": "no roles to provision", "status": None}
+
+    company_id = _resolve_company_for_chat(db, org_id)
+    if not company_id:
+        logger.warning("cortex_bridge: ensure-department-agents skipped — no company resolved")
+        return {"ok": False, "error": "no company resolved for org", "status": None}
+
+    body = {"companyId": company_id, "roles": roles}
+    headers = {"Content-Type": "application/json", "x-wbit-bridge-secret": secret}
+
+    try:
+        async with httpx.AsyncClient(timeout=_timeout_s()) as client:
+            resp = await client.post(
+                _ensure_department_agents_url(), json=body, headers=headers
+            )
+    except httpx.TimeoutException:
+        logger.warning("cortex_bridge: ensure-department-agents request timed out")
+        return {"ok": False, "error": "ensure-department-agents request timed out", "status": None}
+    except httpx.RequestError as e:
+        logger.warning(f"cortex_bridge: ensure-department-agents request error: {e}")
+        return {
+            "ok": False,
+            "error": f"ensure-department-agents request error: {e}",
+            "status": None,
+        }
+    except Exception as e:  # defensive: provisioning must never raise into the route
+        logger.warning(f"cortex_bridge: ensure-department-agents unexpected error: {e}")
+        return {
+            "ok": False,
+            "error": f"ensure-department-agents unexpected error: {e}",
+            "status": None,
+        }
+
+    try:
+        data = resp.json()
+    except ValueError:
+        data = None
+
+    if resp.status_code not in (200, 201):
+        message = _error_message(
+            data, f"ensure-department-agents returned {resp.status_code}"
+        )
+        logger.warning(
+            "cortex_bridge: ensure-department-agents returned %s: %s",
+            resp.status_code, message,
+        )
+        return {"ok": False, "error": message, "status": resp.status_code}
+
+    if data is None:
+        logger.warning("cortex_bridge: ensure-department-agents returned non-JSON body")
+        return {
+            "ok": False,
+            "error": "ensure-department-agents returned non-JSON body",
+            "status": resp.status_code,
+        }
+
+    agents = data.get("agents") if isinstance(data, dict) else None
+    if not isinstance(agents, list):
+        logger.warning("cortex_bridge: ensure-department-agents returned no agents list")
+        return {
+            "ok": False,
+            "error": "ensure-department-agents returned no agents",
+            "status": resp.status_code,
+        }
+
+    return {"ok": True, "agents": agents}
