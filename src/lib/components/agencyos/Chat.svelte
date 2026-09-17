@@ -1,5 +1,6 @@
 <script lang="ts">
 	import { onMount } from 'svelte';
+	import { afterNavigate } from '$app/navigation';
 	import {
 		activeDeptId,
 		activeDept,
@@ -122,6 +123,22 @@
 		await Promise.all([loadEmployeeTabs(), loadSubAccounts()]);
 		await applySubAccountCreatedReturn();
 		await loadAgencyOSChats();
+	});
+
+	// The "New Chat" nav link lands here as /agencyos/chat?new=1. afterNavigate fires on the
+	// initial load AND on same-route query changes, so tapping it while already on the chat
+	// still starts a fresh thread. The param is stripped so a reload doesn't re-trigger it.
+	afterNavigate(() => {
+		if (typeof window === 'undefined') return;
+		if (!new URLSearchParams(window.location.search).get('new')) return;
+		startNewChat();
+		try {
+			const url = new URL(window.location.href);
+			url.searchParams.delete('new');
+			history.replaceState(history.state, '', `${url.pathname}${url.search}${url.hash}`);
+		} catch (error) {
+			console.error('Failed to clear new-chat param', error);
+		}
 	});
 
 	$: if ($activeOrgId && $activeOrgId !== lastLoadedOrgId) {
