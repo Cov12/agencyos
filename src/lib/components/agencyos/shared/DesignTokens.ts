@@ -41,10 +41,11 @@ export const navItems: NavItem[] = [
 	{ label: 'Settings', href: '/agencyos/settings', icon: 'settings' },
 ];
 
-/** OpenWebUI features integrated into AgencyOS nav */
+/** OpenWebUI features integrated into AgencyOS nav.
+ * These must point at /agencyos/* surfaces — raw OWUI routes (/, /workspace) are
+ * redirected away for tenants by the #93 lockdown, so they dead-ended on the dashboard.
+ * Search lives on the chat surface already; Workspace was raw OWUI. Notes returns here
+ * once the AgencyOS-branded /agencyos/notes surface ships (tracked separately). */
 export const toolItems: NavItem[] = [
-	{ label: 'New Chat', href: '/', icon: 'add_comment' },
-	{ label: 'Search', href: '/', icon: 'search' },
-	{ label: 'Notes', href: '/', icon: 'sticky_note_2' },
-	{ label: 'Workspace', href: '/workspace', icon: 'workspaces' },
+	{ label: 'New Chat', href: '/agencyos/chat?new=1', icon: 'add_comment' },
 ];
