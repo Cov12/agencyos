@@ -9,18 +9,29 @@
 	$: currentPath = $page.url.pathname;
 
 	// Force Svelte to re-evaluate nav items when path changes
-	$: activeHref = navItems.find((item) => {
-		if (item.href === '/agencyos') return currentPath === '/agencyos';
-		return currentPath.startsWith(item.href);
-	})?.href ?? '';
+	$: activeHref =
+		navItems.find((item) => {
+			if (item.href === '/agencyos') return currentPath === '/agencyos';
+			return currentPath.startsWith(item.href);
+		})?.href ?? '';
+
+	$: activeToolHref =
+		toolItems.find((item) => {
+			if (item.href === '/') return currentPath === '/';
+			return currentPath.startsWith(item.href);
+		})?.href ?? '';
 </script>
 
 <aside
-	class="agency-nav flex flex-col h-full {collapsed ? 'w-0 -translate-x-full' : 'w-72'} transition-all duration-300 overflow-hidden"
+	class="agency-nav flex flex-col h-full {collapsed
+		? 'w-0 -translate-x-full'
+		: 'w-72'} transition-all duration-300 overflow-hidden"
 >
 	<!-- Logo / Branding -->
 	<div class="p-6 flex items-center gap-3 shrink-0">
-		<div class="w-10 h-10 rounded-xl bg-[#6961ff] flex items-center justify-center shadow-lg shadow-[#6961ff]/20">
+		<div
+			class="w-10 h-10 rounded-xl bg-[#6961ff] flex items-center justify-center shadow-lg shadow-[#6961ff]/20"
+		>
 			<span class="material-symbols-outlined text-white text-2xl">auto_awesome</span>
 		</div>
 		<div>
@@ -44,15 +55,17 @@
 				<a
 					class="flex items-center gap-3 px-3 py-2.5 rounded-lg transition-all group
 						{activeHref === item.href
-							? 'bg-[#6961ff]/10 text-[#6961ff] border border-[#6961ff]/20'
-							: 'text-slate-400 hover:bg-white/5 hover:text-white border border-transparent'}"
+						? 'bg-[#6961ff]/10 text-[#6961ff] border border-[#6961ff]/20'
+						: 'text-slate-400 hover:bg-white/5 hover:text-white border border-transparent'}"
 					href={item.href}
 					on:click={() => onNavigate?.()}
 				>
 					<span class="material-symbols-outlined text-[20px]">{item.icon}</span>
 					<span class="text-sm font-medium">{item.label}</span>
 					{#if item.badge}
-						<span class="ml-auto bg-red-500 text-white text-[10px] font-bold px-1.5 py-0.5 rounded-full">
+						<span
+							class="ml-auto bg-red-500 text-white text-[10px] font-bold px-1.5 py-0.5 rounded-full"
+						>
 							{item.badge}
 						</span>
 					{/if}
@@ -65,7 +78,10 @@
 			<p class="px-3 mb-2 text-[10px] font-bold text-slate-500 uppercase tracking-widest">Tools</p>
 			{#each toolItems as item}
 				<a
-					class="flex items-center gap-3 px-3 py-2 rounded-lg transition-all text-slate-400 hover:bg-white/5 hover:text-white border border-transparent"
+					class="flex items-center gap-3 px-3 py-2 rounded-lg transition-all border
+						{activeToolHref === item.href
+						? 'bg-[#6961ff]/10 text-[#6961ff] border-[#6961ff]/20'
+						: 'text-slate-400 hover:bg-white/5 hover:text-white border-transparent'}"
 					href={item.href}
 					on:click={() => onNavigate?.()}
 				>
@@ -88,7 +104,8 @@
 				<p class="text-sm font-semibold truncate text-slate-100">Admin</p>
 				<p class="text-xs text-slate-500 truncate">Organization Owner</p>
 			</div>
-			<span class="material-symbols-outlined text-slate-500 cursor-pointer hover:text-white transition-colors text-[20px]"
+			<span
+				class="material-symbols-outlined text-slate-500 cursor-pointer hover:text-white transition-colors text-[20px]"
 				>logout</span
 			>
 		</div>

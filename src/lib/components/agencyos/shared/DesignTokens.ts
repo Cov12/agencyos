@@ -6,7 +6,7 @@ export const colors = {
 	'aos-accent': '#20B2AA',
 	'aos-primary-hover': '#5851d8',
 	'aos-glass-border': 'rgba(255, 255, 255, 0.08)',
-	'aos-glass-bg': 'rgba(28, 28, 33, 0.7)',
+	'aos-glass-bg': 'rgba(28, 28, 33, 0.7)'
 } as const;
 
 export const glassPanel = `
@@ -38,7 +38,7 @@ export const navItems: NavItem[] = [
 	{ label: 'Dashboard', href: '/agencyos', icon: 'dashboard' },
 	{ label: 'Chat', href: '/agencyos/chat', icon: 'chat_bubble' },
 	{ label: 'Voice', href: '/agencyos/voice', icon: 'graphic_eq' },
-	{ label: 'Settings', href: '/agencyos/settings', icon: 'settings' },
+	{ label: 'Settings', href: '/agencyos/settings', icon: 'settings' }
 ];
 
 /** OpenWebUI features integrated into AgencyOS nav.
@@ -48,4 +48,5 @@ export const navItems: NavItem[] = [
  * once the AgencyOS-branded /agencyos/notes surface ships (tracked separately). */
 export const toolItems: NavItem[] = [
 	{ label: 'New Chat', href: '/agencyos/chat?new=1', icon: 'add_comment' },
+	{ label: 'Notes', href: '/agencyos/notes', icon: 'sticky_note_2' }
 ];

@@ -20,6 +20,7 @@
 		"cy:open": "cypress open",
 		"test:frontend": "vitest --passWithNoTests",
 		"smoke:agencyos:chat": "playwright test tests/smoke/agencyos-chat-persistence.spec.ts",
+		"smoke:agencyos:notes": "playwright test tests/smoke/agencyos-notes.spec.ts",
 		"pyodide:fetch": "node scripts/prepare-pyodide.js"
 	},
 	"devDependencies": {
