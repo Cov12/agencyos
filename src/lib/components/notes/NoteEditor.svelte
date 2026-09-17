@@ -97,9 +97,18 @@
 	import AdjustmentsHorizontalOutline from '../icons/AdjustmentsHorizontalOutline.svelte';
 
 	export let id: null | string = null;
+	export let basePath = '/notes';
+	export let variant: 'default' | 'agencyos' = 'default';
 
 	let editor = null;
 	let note = null;
+
+	$: isAgencyOS = variant === 'agencyos';
+	$: noteMeta = note?.meta ?? note?.data?.meta ?? {};
+	$: isAssistantCreated =
+		['assistant', 'ai_assistant'].includes(noteMeta?.created_by) ||
+		['agencyos_chat', 'agencyos_voice', 'assistant'].includes(noteMeta?.source);
+	$: assistantLabel = noteMeta?.assistant_name || noteMeta?.agent_name || 'WBIT Assistant';
 
 	const newNote = {
 		title: '',
@@ -615,7 +624,7 @@ ${content}
 
 		if (res) {
 			toast.success($i18n.t('Note deleted successfully'));
-			goto('/notes');
+			goto(basePath);
 		} else {
 			toast.error($i18n.t('Failed to delete note'));
 		}
@@ -899,7 +908,12 @@ Provide the enhanced notes in markdown format. Use markdown syntax for headings,
 	</div>
 </DeleteConfirmDialog>
 
-<PaneGroup direction="horizontal" class="w-full h-full">
+<PaneGroup
+	direction="horizontal"
+	class="w-full h-full {isAgencyOS
+		? 'rounded-2xl border border-white/10 bg-[#121217]/90 text-slate-100 shadow-2xl shadow-black/20 overflow-hidden'
+		: ''}"
+>
 	<Pane defaultSize={70} minSize={30} class="h-full flex flex-col w-full relative">
 		<div class="relative flex-1 w-full h-full flex justify-center pt-[11px]" id="note-editor">
 			{#if loading}
@@ -910,7 +924,11 @@ Provide the enhanced notes in markdown format. Use markdown syntax for headings,
 				</div>
 			{:else}
 				<div class=" w-full flex flex-col {loading ? 'opacity-20' : ''}">
-					<div class="shrink-0 w-full flex justify-between items-center px-3.5 mb-1.5">
+					<div
+						class={isAgencyOS
+							? 'shrink-0 w-full flex justify-between items-center border-b border-white/10 px-4 py-3'
+							: 'shrink-0 w-full flex justify-between items-center px-3.5 mb-1.5'}
+					>
 						<div class="w-full min-w-0 flex items-center">
 							{#if $mobile}
 								<div
@@ -937,7 +955,10 @@ Provide the enhanced notes in markdown format. Use markdown syntax for headings,
 							{/if}
 
 							<input
-								class="w-full text-2xl font-medium bg-transparent outline-hidden"
+								data-testid={isAgencyOS ? 'agencyos-note-title' : undefined}
+								class={isAgencyOS
+									? 'w-full min-w-0 bg-transparent text-2xl font-semibold text-white outline-hidden placeholder:text-slate-600'
+									: 'w-full text-2xl font-medium bg-transparent outline-hidden'}
 								type="text"
 								bind:value={note.title}
 								placeholder={titleGenerating ? $i18n.t('Generating...') : $i18n.t('Title')}
@@ -958,6 +979,17 @@ Provide the enhanced notes in markdown format. Use markdown syntax for headings,
 									changeDebounceHandler();
 								}}
 							/>
+
+							{#if isAgencyOS && isAssistantCreated}
+								<div
+									data-testid="agencyos-note-ai-badge"
+									class="ml-3 hidden shrink-0 items-center gap-1.5 rounded-full border border-[#6961ff]/30 bg-[#6961ff]/15 px-3 py-1 text-xs font-medium text-[#b8b4ff] md:inline-flex"
+									title={`Created by ${assistantLabel}`}
+								>
+									<span class="material-symbols-outlined text-[15px]">auto_awesome</span>
+									{assistantLabel}
+								</div>
+							{/if}
 
 							{#if titleInputFocused && !titleGenerating}
 								<div
@@ -1060,7 +1092,7 @@ Provide the enhanced notes in markdown format. Use markdown syntax for headings,
 									}}
 									onCopyLink={async () => {
 										const baseUrl = window.location.origin;
-										const res = await copyToClipboard(`${baseUrl}/notes/${note.id}`);
+										const res = await copyToClipboard(`${baseUrl}${basePath}/${note.id}`);
 
 										if (res) {
 											toast.success($i18n.t('Copied link to clipboard'));
@@ -1111,7 +1143,7 @@ Provide the enhanced notes in markdown format. Use markdown syntax for headings,
 						</div>
 					</div>
 
-					<div class="  px-2.5">
+					<div class={isAgencyOS ? 'px-4 py-2' : '  px-2.5'}>
 						<div
 							class=" flex w-full bg-transparent overflow-x-auto scrollbar-none"
 							on:wheel={(e) => {
@@ -1167,8 +1199,11 @@ Provide the enhanced notes in markdown format. Use markdown syntax for headings,
 					</div>
 
 					<div
-						class=" flex-1 w-full h-full overflow-auto px-3.5 relative"
+						class={isAgencyOS
+							? 'relative flex-1 w-full h-full overflow-auto px-5 py-4'
+							: ' flex-1 w-full h-full overflow-auto px-3.5 relative'}
 						id="note-content-container"
+						data-testid={isAgencyOS ? 'agencyos-note-editor' : undefined}
 					>
 						{#if editing}
 							<div
@@ -1182,7 +1217,9 @@ Provide the enhanced notes in markdown format. Use markdown syntax for headings,
 							bind:this={inputElement}
 							bind:editor
 							id={`note-${note.id}`}
-							className="input-prose-sm px-0.5 h-[calc(100%-2rem)]"
+							className={isAgencyOS
+								? 'input-prose-sm max-w-4xl mx-auto rounded-xl border border-white/10 bg-black/20 px-5 py-4 min-h-[calc(100%-2rem)]'
+								: 'input-prose-sm px-0.5 h-[calc(100%-2rem)]'}
 							json={true}
 							bind:value={note.data.content.json}
 							html={editorHtml}

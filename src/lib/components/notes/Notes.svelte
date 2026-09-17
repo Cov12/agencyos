@@ -48,6 +48,9 @@
 	import DropdownOptions from '../common/DropdownOptions.svelte';
 	import Loader from '../common/Loader.svelte';
 
+	export let basePath = '/notes';
+	export let variant: 'default' | 'agencyos' = 'default';
+
 	let loaded = false;
 
 	let importFiles = '';
@@ -71,6 +74,18 @@
 
 	let itemsLoading = false;
 	let allItemsLoaded = false;
+
+	$: isAgencyOS = variant === 'agencyos';
+
+	const noteHref = (id: string) => `${basePath}/${id}`;
+	const noteShareUrl = (id: string) => `${window.location.origin}${noteHref(id)}`;
+	const noteMeta = (note) => note?.meta ?? note?.data?.meta ?? {};
+	const isAssistantCreated = (note) =>
+		['assistant', 'ai_assistant'].includes(noteMeta(note)?.created_by) ||
+		['agencyos_chat', 'agencyos_voice', 'assistant'].includes(noteMeta(note)?.source);
+	const assistantLabel = (note) =>
+		noteMeta(note)?.assistant_name || noteMeta(note)?.agent_name || 'WBIT Assistant';
+	const notePreview = (note) => note?.data?.content?.md || $i18n.t('No content');
 
 	const downloadHandler = async (type) => {
 		if (type === 'txt') {
@@ -128,7 +143,9 @@
 							md: content
 						}
 					},
-					meta: null,
+					meta: isAgencyOS
+						? { agencyos: true, created_by: 'user', source: 'agencyos_notes' }
+						: null,
 					access_grants: []
 				}).catch((error) => {
 					toast.error(`${error}`);
@@ -307,7 +324,13 @@
 
 <FilesOverlay show={dragged} />
 
-<div id="notes-container" class="w-full min-h-full h-full px-3 md:px-[18px]">
+<div
+	id="notes-container"
+	data-testid={isAgencyOS ? 'agencyos-notes-page' : undefined}
+	class={isAgencyOS
+		? 'w-full min-h-full h-full text-slate-100'
+		: 'w-full min-h-full h-full px-3 md:px-[18px]'}
+>
 	{#if loaded}
 		<DeleteConfirmDialog
 			bind:show={showDeleteConfirm}
@@ -322,47 +345,101 @@
 			</div>
 		</DeleteConfirmDialog>
 
-		<div class="flex flex-col gap-1 px-1 mt-1.5 mb-3">
-			<div class="flex justify-between items-center">
-				<div class="flex items-center md:self-center text-xl font-medium px-0.5 gap-2 shrink-0">
-					<div>
-						{$i18n.t('Notes')}
-					</div>
-
-					<div class="text-lg font-medium text-gray-500 dark:text-gray-500">
-						{total}
-					</div>
-				</div>
-
-				<div class="flex w-full justify-end gap-1.5">
-					<button
-						class=" px-2 py-1.5 rounded-xl bg-black text-white dark:bg-white dark:text-black transition font-medium text-sm flex items-center"
-						on:click={async () => {
-							const res = await createNoteHandler(dayjs().format('YYYY-MM-DD'));
-
-							if (res) {
-								goto(`/notes/${res.id}`);
-							}
-						}}
+		<div class={isAgencyOS ? 'mb-5' : 'flex flex-col gap-1 px-1 mt-1.5 mb-3'}>
+			<div
+				class={isAgencyOS
+					? 'rounded-2xl border border-white/10 bg-gradient-to-br from-white/[0.08] to-white/[0.03] p-5 shadow-2xl shadow-black/20'
+					: 'flex justify-between items-center'}
+			>
+				<div
+					class={isAgencyOS
+						? 'flex flex-col gap-4 md:flex-row md:items-end md:justify-between'
+						: 'contents'}
+				>
+					<div
+						class={isAgencyOS
+							? 'max-w-2xl'
+							: 'flex items-center md:self-center text-xl font-medium px-0.5 gap-2 shrink-0'}
 					>
-						<Plus className="size-3" strokeWidth="2.5" />
+						{#if isAgencyOS}
+							<div
+								class="mb-2 flex items-center gap-2 text-[11px] font-semibold uppercase tracking-[0.18em] text-[#20B2AA]"
+							>
+								<span class="material-symbols-outlined text-[16px]">sticky_note_2</span>
+								AgencyOS Notes
+							</div>
+							<h1 class="text-2xl font-semibold tracking-tight text-white md:text-3xl">
+								Operational notes that stay with the work
+							</h1>
+							<p class="mt-2 max-w-xl text-sm leading-6 text-slate-400">
+								Capture plans, client context, and assistant-saved details without leaving the
+								AgencyOS workspace.
+							</p>
+						{:else}
+							<div>
+								{$i18n.t('Notes')}
+							</div>
 
-						<div class=" ml-1 text-xs">{$i18n.t('New Note')}</div>
-					</button>
+							<div class="text-lg font-medium text-gray-500 dark:text-gray-500">
+								{total}
+							</div>
+						{/if}
+					</div>
+
+					<div class={isAgencyOS ? 'flex items-center gap-3' : 'flex w-full justify-end gap-1.5'}>
+						{#if isAgencyOS}
+							<div
+								class="hidden rounded-xl border border-white/10 bg-black/20 px-3 py-2 text-right md:block"
+							>
+								<div class="text-xs uppercase tracking-wide text-slate-500">Notes</div>
+								<div class="text-lg font-semibold text-white">{total ?? '—'}</div>
+							</div>
+						{/if}
+						<button
+							data-testid={isAgencyOS ? 'agencyos-new-note' : undefined}
+							class={isAgencyOS
+								? 'inline-flex items-center rounded-xl bg-[#6961ff] px-4 py-2.5 text-sm font-semibold text-white shadow-lg shadow-[#6961ff]/25 transition hover:bg-[#5851d8]'
+								: ' px-2 py-1.5 rounded-xl bg-black text-white dark:bg-white dark:text-black transition font-medium text-sm flex items-center'}
+							on:click={async () => {
+								const res = await createNoteHandler(
+									dayjs().format('YYYY-MM-DD'),
+									undefined,
+									undefined,
+									isAgencyOS
+										? { agencyos: true, created_by: 'user', source: 'agencyos_notes' }
+										: null
+								);
+
+								if (res) {
+									goto(noteHref(res.id));
+								}
+							}}
+						>
+							<Plus className="size-3" strokeWidth="2.5" />
+
+							<div class=" ml-1 text-xs">{$i18n.t('New Note')}</div>
+						</button>
+					</div>
 				</div>
 			</div>
 		</div>
 
 		<div
-			class="py-2 bg-white dark:bg-gray-900 rounded-3xl border border-gray-100/30 dark:border-gray-850/30"
+			data-testid={isAgencyOS ? 'agencyos-notes-surface' : undefined}
+			class={isAgencyOS
+				? 'rounded-2xl border border-white/10 bg-[#121217]/90 p-3 shadow-2xl shadow-black/20'
+				: 'py-2 bg-white dark:bg-gray-900 rounded-3xl border border-gray-100/30 dark:border-gray-850/30'}
 		>
 			<div class="px-3.5 flex flex-1 items-center w-full space-x-2 py-0.5 pb-2">
 				<div class="flex flex-1 items-center">
-					<div class=" self-center ml-1 mr-3">
+					<div class=" self-center ml-1 mr-3 {isAgencyOS ? 'text-slate-500' : ''}">
 						<Search className="size-3.5" />
 					</div>
 					<input
-						class=" w-full text-sm py-1 rounded-r-xl outline-hidden bg-transparent"
+						data-testid={isAgencyOS ? 'agencyos-notes-search' : undefined}
+						class={isAgencyOS
+							? 'w-full rounded-xl border border-white/10 bg-black/20 px-3 py-2 text-sm text-slate-100 placeholder:text-slate-500 outline-hidden focus:border-[#6961ff]/60'
+							: ' w-full text-sm py-1 rounded-r-xl outline-hidden bg-transparent'}
 						bind:value={query}
 						placeholder={$i18n.t('Search Notes')}
 					/>
@@ -397,7 +474,9 @@
 					>
 						<DropdownOptions
 							align="start"
-							className="flex w-full items-center gap-2 truncate px-3 py-1.5 text-sm bg-gray-50 dark:bg-gray-850 rounded-xl  placeholder-gray-400 outline-hidden focus:outline-hidden"
+							className={isAgencyOS
+								? 'flex w-full items-center gap-2 truncate px-3 py-1.5 text-sm bg-white/5 text-slate-200 rounded-xl placeholder-slate-500 outline-hidden focus:outline-hidden'
+								: 'flex w-full items-center gap-2 truncate px-3 py-1.5 text-sm bg-gray-50 dark:bg-gray-850 rounded-xl  placeholder-gray-400 outline-hidden focus:outline-hidden'}
 							bind:value={viewOption}
 							items={[
 								{ value: null, label: $i18n.t('All') },
@@ -453,7 +532,9 @@
 						<div class="">
 							{#each groupedNotes as [timeRange, notesList], idx}
 								<div
-									class="w-full text-xs text-gray-500 dark:text-gray-500 font-medium px-2.5 pb-2.5"
+									class={isAgencyOS
+										? 'w-full px-2.5 pb-2.5 text-xs font-semibold uppercase tracking-wide text-slate-500'
+										: 'w-full text-xs text-gray-500 dark:text-gray-500 font-medium px-2.5 pb-2.5'}
 								>
 									{$i18n.t(timeRange)}
 								</div>
@@ -464,9 +545,13 @@
 									>
 										{#each notesList as note, idx (note.id)}
 											<div
-												class=" flex cursor-pointer w-full px-3.5 py-1.5 border border-gray-50 dark:border-gray-850/30 bg-transparent dark:hover:bg-gray-850 hover:bg-white rounded-2xl transition"
+												data-testid={isAgencyOS ? 'agencyos-note-card' : undefined}
+												data-note-id={isAgencyOS ? note.id : undefined}
+												class={isAgencyOS
+													? 'flex w-full cursor-pointer rounded-xl border border-white/10 bg-white/[0.03] px-4 py-3 transition hover:border-[#6961ff]/40 hover:bg-[#6961ff]/10'
+													: ' flex cursor-pointer w-full px-3.5 py-1.5 border border-gray-50 dark:border-gray-850/30 bg-transparent dark:hover:bg-gray-850 hover:bg-white rounded-2xl transition'}
 											>
-												<a href={`/notes/${note.id}`} class="w-full flex flex-col justify-between">
+												<a href={noteHref(note.id)} class="w-full flex flex-col justify-between">
 													<div class="flex-1">
 														<div class="  flex items-center gap-2 self-center justify-between">
 															<Tooltip
@@ -475,15 +560,29 @@
 																placement="top-start"
 															>
 																<div
-																	class=" text-sm font-medium capitalize flex-1 w-full line-clamp-1"
+																	class={isAgencyOS
+																		? 'line-clamp-1 w-full flex-1 text-sm font-semibold capitalize text-slate-100'
+																		: ' text-sm font-medium capitalize flex-1 w-full line-clamp-1'}
 																>
 																	{note.title}
 																</div>
 															</Tooltip>
 
 															<div class="flex shrink-0 items-center text-xs gap-2.5">
+																{#if isAgencyOS && isAssistantCreated(note)}
+																	<div
+																		data-testid="agencyos-note-ai-badge"
+																		class="inline-flex items-center gap-1 rounded-full border border-[#6961ff]/30 bg-[#6961ff]/15 px-2 py-0.5 text-[11px] font-medium text-[#b8b4ff]"
+																		title={`Created by ${assistantLabel(note)}`}
+																	>
+																		<span class="material-symbols-outlined text-[13px]"
+																			>auto_awesome</span
+																		>
+																		{assistantLabel(note)}
+																	</div>
+																{/if}
 																<Tooltip content={dayjs(note.updated_at / 1000000).format('LLLL')}>
-																	<div>
+																	<div class={isAgencyOS ? 'text-slate-500' : ''}>
 																		{dayjs(note.updated_at / 1000000).fromNow()}
 																	</div>
 																</Tooltip>
@@ -492,7 +591,11 @@
 																	className="flex shrink-0"
 																	placement="top-start"
 																>
-																	<div class="shrink-0 text-gray-500">
+																	<div
+																		class={isAgencyOS
+																			? 'shrink-0 text-slate-500'
+																			: 'shrink-0 text-gray-500'}
+																	>
 																		{$i18n.t('By {{name}}', {
 																			name: capitalizeFirstLetter(
 																				note?.user?.name ??
@@ -511,10 +614,7 @@
 																			downloadHandler(type);
 																		}}
 																		onCopyLink={async () => {
-																			const baseUrl = window.location.origin;
-																			const res = await copyToClipboard(
-																				`${baseUrl}/notes/${note.id}`
-																			);
+																			const res = await copyToClipboard(noteShareUrl(note.id));
 
 																			if (res) {
 																				toast.success($i18n.t('Copied link to clipboard'));
@@ -528,7 +628,9 @@
 																		}}
 																	>
 																		<button
-																			class="self-center w-fit text-sm p-1 dark:text-gray-300 dark:hover:text-white hover:bg-black/5 dark:hover:bg-white/5 rounded-xl"
+																			class={isAgencyOS
+																				? 'self-center w-fit rounded-xl p-1 text-sm text-slate-400 hover:bg-white/10 hover:text-white'
+																				: 'self-center w-fit text-sm p-1 dark:text-gray-300 dark:hover:text-white hover:bg-black/5 dark:hover:bg-white/5 rounded-xl'}
 																			type="button"
 																		>
 																			<EllipsisHorizontal className="size-5" />
@@ -550,20 +652,40 @@
 									>
 										{#each notesList as note, idx (note.id)}
 											<div
-												class=" flex space-x-4 cursor-pointer w-full px-4.5 py-4 border border-gray-50 dark:border-gray-850/30 bg-transparent dark:hover:bg-gray-850 hover:bg-white rounded-2xl transition"
+												data-testid={isAgencyOS ? 'agencyos-note-card' : undefined}
+												data-note-id={isAgencyOS ? note.id : undefined}
+												class={isAgencyOS
+													? 'flex min-h-44 w-full cursor-pointer rounded-xl border border-white/10 bg-white/[0.03] px-4.5 py-4 transition hover:border-[#6961ff]/40 hover:bg-[#6961ff]/10'
+													: ' flex space-x-4 cursor-pointer w-full px-4.5 py-4 border border-gray-50 dark:border-gray-850/30 bg-transparent dark:hover:bg-gray-850 hover:bg-white rounded-2xl transition'}
 											>
 												<div class=" flex flex-1 space-x-4 cursor-pointer w-full">
 													<a
-														href={`/notes/${note.id}`}
+														href={noteHref(note.id)}
 														class="w-full -translate-y-0.5 flex flex-col justify-between"
 													>
 														<div class="flex-1">
 															<div
 																class="  flex items-center gap-2 self-center mb-1 justify-between"
 															>
-																<div class=" font-semibold line-clamp-1 capitalize">
+																<div
+																	class={isAgencyOS
+																		? 'font-semibold line-clamp-1 capitalize text-slate-100'
+																		: ' font-semibold line-clamp-1 capitalize'}
+																>
 																	{note.title}
 																</div>
+																{#if isAgencyOS && isAssistantCreated(note)}
+																	<div
+																		data-testid="agencyos-note-ai-badge"
+																		class="ml-auto inline-flex items-center gap-1 rounded-full border border-[#6961ff]/30 bg-[#6961ff]/15 px-2 py-0.5 text-[11px] font-medium text-[#b8b4ff]"
+																		title={`Created by ${assistantLabel(note)}`}
+																	>
+																		<span class="material-symbols-outlined text-[13px]"
+																			>auto_awesome</span
+																		>
+																		{assistantLabel(note)}
+																	</div>
+																{/if}
 
 																<div>
 																	<NoteMenu
@@ -573,10 +695,7 @@
 																			downloadHandler(type);
 																		}}
 																		onCopyLink={async () => {
-																			const baseUrl = window.location.origin;
-																			const res = await copyToClipboard(
-																				`${baseUrl}/notes/${note.id}`
-																			);
+																			const res = await copyToClipboard(noteShareUrl(note.id));
 
 																			if (res) {
 																				toast.success($i18n.t('Copied link to clipboard'));
@@ -590,7 +709,9 @@
 																		}}
 																	>
 																		<button
-																			class="self-center w-fit text-sm p-1 dark:text-gray-300 dark:hover:text-white hover:bg-black/5 dark:hover:bg-white/5 rounded-xl"
+																			class={isAgencyOS
+																				? 'self-center w-fit rounded-xl p-1 text-sm text-slate-400 hover:bg-white/10 hover:text-white'
+																				: 'self-center w-fit text-sm p-1 dark:text-gray-300 dark:hover:text-white hover:bg-black/5 dark:hover:bg-white/5 rounded-xl'}
 																			type="button"
 																		>
 																			<EllipsisHorizontal className="size-5" />
@@ -600,10 +721,12 @@
 															</div>
 
 															<div
-																class=" text-xs text-gray-500 dark:text-gray-500 mb-3 line-clamp-3 min-h-10"
+																class={isAgencyOS
+																	? 'mb-3 line-clamp-3 min-h-10 text-xs leading-5 text-slate-400'
+																	: ' text-xs text-gray-500 dark:text-gray-500 mb-3 line-clamp-3 min-h-10'}
 															>
-																{#if note.data?.content?.md}
-																	{note.data?.content?.md}
+																{#if notePreview(note)}
+																	{notePreview(note)}
 																{:else}
 																	{$i18n.t('No content')}
 																{/if}
@@ -611,7 +734,7 @@
 														</div>
 
 														<div class=" text-xs px-0.5 w-full flex justify-between items-center">
-															<div>
+															<div class={isAgencyOS ? 'text-slate-500' : ''}>
 																{dayjs(note.updated_at / 1000000).fromNow()}
 															</div>
 															<Tooltip
@@ -619,7 +742,11 @@
 																className="flex shrink-0"
 																placement="top-start"
 															>
-																<div class="shrink-0 text-gray-500">
+																<div
+																	class={isAgencyOS
+																		? 'shrink-0 text-slate-500'
+																		: 'shrink-0 text-gray-500'}
+																>
 																	{$i18n.t('By {{name}}', {
 																		name: capitalizeFirstLetter(
 																			note?.user?.name ??
