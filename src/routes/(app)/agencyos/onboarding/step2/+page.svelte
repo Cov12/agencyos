@@ -1,5 +1,8 @@
 <script lang="ts">
-	import DeptSetup from '$lib/components/agencyos/onboarding/DeptSetup.svelte';
+	// P1: step 2 captures business context (the facts seeded into Contexta). Department
+	// provisioning is P2 — DeptSetup.svelte is left untouched for that drop, and this step
+	// deliberately does not activate or create anything.
+	import ContextSetup from '$lib/components/agencyos/onboarding/ContextSetup.svelte';
 </script>
 
-<DeptSetup step={2} />
+<ContextSetup step={2} />

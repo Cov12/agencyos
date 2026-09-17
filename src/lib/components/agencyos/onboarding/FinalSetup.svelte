@@ -3,6 +3,14 @@
 	import GlassPanel from '$lib/components/agencyos/shared/GlassPanel.svelte';
 	import MaterialIcon from '$lib/components/agencyos/shared/MaterialIcon.svelte';
 	import StatusBadge from '$lib/components/agencyos/shared/StatusBadge.svelte';
+	import { user } from '$lib/stores';
+	import {
+		activeOrgId,
+		onboardingAnswers,
+		onboardingComplete,
+		resetOnboardingAnswers
+	} from '$lib/stores/agencyos';
+	import { completeOnboarding } from '$lib/apis/agencyos';
 
 	export let step: number;
 
@@ -12,12 +20,60 @@
 		{ title: 'Ops Manager', focus: 'Workflow & Logic', icon: 'inventory_2' }
 	];
 
+	let launching = false;
+	/** Soft notice, never a blocker: the user still lands in the app. */
+	let notice = '';
+
+	function authToken(): string | undefined {
+		return (($user as { token?: string } | undefined)?.token ??
+			(typeof localStorage !== 'undefined' ? localStorage.token : undefined)) as
+			| string
+			| undefined;
+	}
+
 	function goBack() {
 		goto('/agencyos/onboarding/step3');
 	}
 
-	function launch() {
-		goto('/agencyos');
+	/**
+	 * Persist the captured answers, seed them into the assistant's memory, and mark
+	 * onboarding complete server-side — then enter the app.
+	 *
+	 * Failure NEVER traps the user in the wizard: seeding is best-effort on the backend too
+	 * (completion commits even when the seed fails), so anything that goes wrong here just
+	 * shows a soft notice and still routes to /agencyos.
+	 */
+	async function launch() {
+		if (launching) return;
+		launching = true;
+		notice = '';
+
+		const token = authToken();
+		const orgId = $activeOrgId;
+
+		if (token && orgId) {
+			try {
+				// subAccountId intentionally omitted: P1 seeds at company/business scope.
+				const result = await completeOnboarding(token, orgId, $onboardingAnswers);
+				onboardingComplete.set(true);
+				resetOnboardingAnswers();
+				if (result && result.seeded === false) {
+					notice = "Saved. Your assistant's memory is still syncing — it'll catch up shortly.";
+				}
+			} catch (error) {
+				console.error('Failed to complete onboarding', error);
+				notice = "We couldn't save your answers just now. You can add them later in settings.";
+			}
+		} else {
+			notice = "We couldn't save your answers just now. You can add them later in settings.";
+		}
+
+		// A notice deserves a beat on screen before the route change swaps the page out.
+		if (notice) {
+			await new Promise((resolve) => setTimeout(resolve, 1600));
+		}
+		await goto('/agencyos');
+		launching = false;
 	}
 </script>
 
@@ -92,11 +148,22 @@
 						<MaterialIcon icon="arrow_back" size={16} />
 						Back
 					</button>
-					<button on:click={launch} class="flex w-full items-center justify-center gap-3 rounded-lg bg-[#6961ff] px-8 py-3 font-bold text-white shadow-lg shadow-[#6961ff]/30 transition-all hover:scale-[1.01] hover:bg-[#6961ff]/90 sm:w-auto md:px-12 md:py-4">
-						Launch Your Organization
-						<MaterialIcon icon="rocket_launch" size={18} />
+					<button
+						on:click={launch}
+						disabled={launching}
+						class="flex w-full items-center justify-center gap-3 rounded-lg bg-[#6961ff] px-8 py-3 font-bold text-white shadow-lg shadow-[#6961ff]/30 transition-all hover:scale-[1.01] hover:bg-[#6961ff]/90 disabled:cursor-wait disabled:opacity-80 disabled:hover:scale-100 sm:w-auto md:px-12 md:py-4"
+					>
+						{launching ? 'Briefing your assistant…' : 'Launch Your Organization'}
+						<MaterialIcon icon={launching ? 'autorenew' : 'rocket_launch'} size={18} class={launching ? 'animate-spin' : ''} />
 					</button>
 				</div>
+
+				{#if notice}
+					<p class="mt-5 flex items-center gap-2 rounded-lg border border-amber-500/20 bg-amber-500/10 px-4 py-2.5 text-sm text-amber-300">
+						<MaterialIcon icon="info" size={16} />
+						{notice}
+					</p>
+				{/if}
 
 				<p class="mt-8 flex items-center gap-2 text-xs text-slate-500">
 					<MaterialIcon icon="shield" size={14} />

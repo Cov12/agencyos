@@ -323,6 +323,61 @@ export const getOrgSubAccounts = async (token: string, orgId: string) => {
 	return apiCall<OrgSubAccountsResponse>(`${AGENCYOS_API_BASE}/orgs/${orgId}/subaccounts`, token);
 };
 
+// ─── Onboarding (P1: capture + Contexta seed + completion) ────
+
+/** The FIXED P1 question set. Keys must match the backend's FACT_LABELS
+ * (apps/agencyos/backend/routers/onboarding.py) — that mapping turns each answer into one
+ * seeded fact ("Industry: SaaS"). Every field is optional: the user can skip any of them
+ * and only the answered ones get seeded. */
+export interface OnboardingAnswers {
+	orgName?: string;
+	industry?: string;
+	whatBusinessDoes?: string;
+	customers?: string;
+	primaryGoal?: string;
+	dayToDay?: string;
+}
+
+export interface OnboardingState {
+	completed: boolean;
+	completedAt?: number | null;
+	version?: number;
+}
+
+export interface OnboardingCompleteResponse {
+	ok: boolean;
+	completed: boolean;
+	/** false when the Contexta seed failed — onboarding is still complete (seeding is
+	 * best-effort), and this is the signal a later retry keys off. */
+	seeded: boolean;
+	factCount?: number;
+}
+
+/** Server-side onboarding gate, replacing the ephemeral `onboardingComplete` store — the
+ * old one reset on every reload and never crossed devices. */
+export const getOnboardingState = async (token: string, orgId: string) => {
+	return apiCall<OnboardingState>(`${AGENCYOS_API_BASE}/orgs/${orgId}/onboarding`, token);
+};
+
+/** Persist the captured answers, seed them into Contexta, and mark onboarding done.
+ * `subAccountId` is accepted by the backend for a later per-sub-account pass; the P1
+ * org-level flow omits it, so seeding lands at company/business scope. */
+export const completeOnboarding = async (
+	token: string,
+	orgId: string,
+	answers: OnboardingAnswers,
+	subAccountId?: string
+) => {
+	return apiCall<OnboardingCompleteResponse>(
+		`${AGENCYOS_API_BASE}/orgs/${orgId}/onboarding`,
+		token,
+		{
+			method: 'POST',
+			body: JSON.stringify({ answers, ...(subAccountId && { subAccountId }) })
+		}
+	);
+};
+
 // ─── First sub-account onboarding (Phase 1.4) ─────────────────
 
 /** Portal page that creates a sub-account, and the marker params of the return hop. */
