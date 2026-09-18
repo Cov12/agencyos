@@ -409,6 +409,41 @@ export const provisionOnboardingAgents = async (token: string, orgId: string, ro
 	);
 };
 
+// ─── Onboarding (P3: assisted "help me decide" path) ──────────
+
+export interface OnboardingRoleSuggestion {
+	/** Canonical Cortex role, e.g. `cmo`. */
+	role: string;
+	rationale: string;
+	first_task_hints: string[];
+}
+
+export interface OnboardingSuggestResponse {
+	/** Suggested canonical roles; may be empty when the answers carry no strong signal. */
+	roles: string[];
+	suggestions: OnboardingRoleSuggestion[];
+	model: string;
+}
+
+/** Ask the backend (Cortex via P3a) which departments fit the interview answers. Returns
+ * 502 when Cortex is unreachable; callers fall back to manual picking on any failure. It
+ * only suggests — nothing is provisioned until FinalSetup runs. */
+export const suggestOnboardingRoles = async (
+	token: string,
+	orgId: string,
+	answers: OnboardingAnswers,
+	maxRoles?: number
+) => {
+	return apiCall<OnboardingSuggestResponse>(
+		`${AGENCYOS_API_BASE}/orgs/${orgId}/onboarding/suggest`,
+		token,
+		{
+			method: 'POST',
+			body: JSON.stringify({ answers, ...(maxRoles !== undefined && { maxRoles }) })
+		}
+	);
+};
+
 // ─── First sub-account onboarding (Phase 1.4) ─────────────────
 
 /** Portal page that creates a sub-account, and the marker params of the return hop. */

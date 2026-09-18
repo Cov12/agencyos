@@ -2,9 +2,94 @@
 	import { goto } from '$app/navigation';
 	import GlassPanel from '$lib/components/agencyos/shared/GlassPanel.svelte';
 	import MaterialIcon from '$lib/components/agencyos/shared/MaterialIcon.svelte';
-	import { departments } from '$lib/stores/agencyos';
+	import AssistedSetup from '$lib/components/agencyos/onboarding/AssistedSetup.svelte';
+	import { user } from '$lib/stores';
+	import {
+		activeOrgId,
+		departments,
+		mergeOnboardingAnswers,
+		onboardingAnswers,
+		preselectDepartmentsByRole
+	} from '$lib/stores/agencyos';
+	import { suggestOnboardingRoles, type OnboardingAnswers } from '$lib/apis/agencyos';
 
 	export let step: number;
+
+	/** Manual picking is the default; the interview is an opt-in detour that always comes
+	 * back here with the cards (suggested ones pre-switched on) for the user to confirm. */
+	let mode: 'manual' | 'interview' | 'suggesting' = 'manual';
+	/** Outcome of the last assisted run, shown above the cards. Never blocks Continue. */
+	let assisted: { kind: 'suggested' | 'failed'; ids: Set<string>; rationale: Record<string, string> } | null = null;
+	/** Bumped on every run/cancel so a slow suggest response can't land after the user left. */
+	let requestSeq = 0;
+
+	function authToken(): string | undefined {
+		return (($user as { token?: string } | undefined)?.token ??
+			(typeof localStorage !== 'undefined' ? localStorage.token : undefined)) as
+			| string
+			| undefined;
+	}
+
+	function startInterview() {
+		assisted = null;
+		mode = 'interview';
+	}
+
+	function backToManual() {
+		requestSeq += 1;
+		mode = 'manual';
+	}
+
+	function fallBack() {
+		assisted = { kind: 'failed', ids: new Set(), rationale: {} };
+		mode = 'manual';
+	}
+
+	/** Interview done: keep the answers for the Contexta seed, then ask for a suggestion and
+	 * pre-select it. Any failure (502, empty, network, no org) lands on manual picking. */
+	async function finishInterview(answers: Partial<Record<keyof OnboardingAnswers, string>>) {
+		onboardingAnswers.update((current) => mergeOnboardingAnswers(current, answers));
+
+		const token = authToken();
+		const orgId = $activeOrgId;
+		if (!token || !orgId || !Object.values(answers).some((a) => a?.trim())) {
+			fallBack();
+			return;
+		}
+
+		const seq = ++requestSeq;
+		mode = 'suggesting';
+		try {
+			const result = await suggestOnboardingRoles(token, orgId, $onboardingAnswers);
+			if (seq !== requestSeq) return;
+			const { departments: next, matchedIds } = preselectDepartmentsByRole(
+				$departments,
+				result?.roles ?? []
+			);
+			if (matchedIds.length === 0) {
+				fallBack();
+				return;
+			}
+			departments.set(next);
+			const rationaleByRole = Object.fromEntries(
+				(result?.suggestions ?? []).map((s) => [s.role.trim().toLowerCase(), s.rationale])
+			);
+			assisted = {
+				kind: 'suggested',
+				ids: new Set(matchedIds),
+				rationale: Object.fromEntries(
+					next
+						.filter((d) => matchedIds.includes(d.id) && rationaleByRole[d.role.trim().toLowerCase()])
+						.map((d) => [d.id, rationaleByRole[d.role.trim().toLowerCase()]])
+				)
+			};
+			mode = 'manual';
+		} catch (error) {
+			if (seq !== requestSeq) return;
+			console.error('Failed to suggest onboarding departments', error);
+			fallBack();
+		}
+	}
 
 	function isChecked(status: string) {
 		return status === 'active';
@@ -53,7 +138,47 @@
 				<p class="mx-auto mt-2 max-w-lg text-slate-400">Choose the core areas of your agency you want to manage. You can always change this later in settings.</p>
 			</div>
 
+			{#if mode === 'interview'}
+				<AssistedSetup onComplete={finishInterview} onCancel={backToManual} />
+			{:else if mode === 'suggesting'}
+				<div class="flex flex-col items-center gap-4 px-6 py-14 text-center">
+					<div class="flex items-center gap-2 text-[#6961ff]">
+						<span class="h-2 w-2 animate-bounce rounded-full bg-[#6961ff]"></span>
+						<span class="h-2 w-2 animate-bounce rounded-full bg-[#6961ff] [animation-delay:150ms]"></span>
+						<span class="h-2 w-2 animate-bounce rounded-full bg-[#6961ff] [animation-delay:300ms]"></span>
+					</div>
+					<p class="text-sm text-slate-300">Looking at your answers to suggest a team…</p>
+					<button on:click={backToManual} class="text-xs font-semibold text-slate-400 transition-colors hover:text-white">
+						Skip — I'll pick myself
+					</button>
+				</div>
+			{:else}
 			<div class="space-y-3 p-4 sm:p-5 md:p-6">
+				{#if assisted?.kind === 'suggested'}
+					<div class="flex items-start gap-3 rounded-lg border border-[#6961ff]/30 bg-[#6961ff]/10 p-4 text-sm text-slate-200">
+						<MaterialIcon icon="auto_awesome" size={18} class="mt-0.5 shrink-0 text-[#6961ff]" />
+						<p>Based on your answers, we suggest these — adjust anything before continuing.</p>
+					</div>
+				{:else if assisted?.kind === 'failed'}
+					<div class="flex items-start gap-3 rounded-lg border border-amber-400/20 bg-amber-400/5 p-4 text-sm text-slate-300">
+						<MaterialIcon icon="info" size={18} class="mt-0.5 shrink-0 text-amber-300" />
+						<p>We couldn't generate suggestions just now — pick the departments you want.</p>
+					</div>
+				{/if}
+
+				{#if assisted?.kind !== 'suggested'}
+					<div class="flex flex-col items-start justify-between gap-3 rounded-lg border border-dashed border-[#6961ff]/30 p-4 sm:flex-row sm:items-center">
+						<div>
+							<p class="font-semibold text-white">Not sure which you need?</p>
+							<p class="text-sm text-slate-400">Answer a few quick questions and we'll suggest a team.</p>
+						</div>
+						<button on:click={startInterview} class="flex shrink-0 items-center gap-2 rounded-lg border border-[#6961ff]/40 px-4 py-2 text-sm font-semibold text-[#6961ff] transition-all hover:bg-[#6961ff]/10">
+							<MaterialIcon icon="auto_awesome" size={16} />
+							Help me decide
+						</button>
+					</div>
+				{/if}
+
 				{#each $departments as dept}
 					<div class="group flex items-center justify-between rounded-lg border border-white/5 bg-white/5 p-4 transition-all hover:border-[#6961ff]/50">
 						<div class="flex min-w-0 items-center gap-3 sm:gap-4">
@@ -61,8 +186,16 @@
 								<MaterialIcon icon={dept.icon} size={22} class="text-white" />
 							</div>
 							<div class="min-w-0">
-								<h3 class="font-semibold text-white">{dept.name}</h3>
+								<h3 class="flex items-center gap-2 font-semibold text-white">
+									{dept.name}
+									{#if assisted?.ids.has(dept.id)}
+										<span class="rounded-full bg-[#6961ff]/15 px-2 py-0.5 text-[10px] font-bold uppercase tracking-wider text-[#6961ff]">Suggested</span>
+									{/if}
+								</h3>
 								<p class="hidden truncate text-sm text-slate-400 sm:block">{dept.description}</p>
+								{#if assisted?.rationale[dept.id]}
+									<p class="mt-1 text-xs text-slate-400">{assisted.rationale[dept.id]}</p>
+								{/if}
 							</div>
 						</div>
 
@@ -77,8 +210,17 @@
 						</label>
 					</div>
 				{/each}
-			</div>
 
+				{#if assisted?.kind === 'suggested'}
+					<button on:click={startInterview} class="flex items-center gap-1 text-xs font-semibold text-slate-400 transition-colors hover:text-white">
+						<MaterialIcon icon="refresh" size={14} />
+						Retake the questions
+					</button>
+				{/if}
+			</div>
+			{/if}
+
+			{#if mode === 'manual'}
 			<div class="flex flex-col items-center justify-between gap-3 border-t border-white/5 bg-white/[0.02] px-4 py-4 sm:flex-row sm:px-6 md:px-8 md:py-6">
 				<button on:click={goBack} class="flex w-full items-center justify-center gap-2 rounded-lg px-6 py-2.5 font-semibold text-slate-400 transition-all hover:bg-white/5 hover:text-white sm:w-auto">
 					<MaterialIcon icon="arrow_back" size={18} />
@@ -92,6 +234,7 @@
 					</button>
 				</div>
 			</div>
+			{/if}
 		</GlassPanel>
 	</div>
 </section>
