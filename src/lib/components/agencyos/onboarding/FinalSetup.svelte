@@ -6,23 +6,46 @@
 	import { user } from '$lib/stores';
 	import {
 		activeOrgId,
+		departmentRoles,
 		onboardingAnswers,
 		onboardingComplete,
-		resetOnboardingAnswers
+		resetOnboardingAnswers,
+		selectedDepartments
 	} from '$lib/stores/agencyos';
-	import { completeOnboarding } from '$lib/apis/agencyos';
+	import { completeOnboarding, provisionOnboardingAgents } from '$lib/apis/agencyos';
 
 	export let step: number;
 
-	const teamMembers = [
-		{ title: 'Marketing Director', focus: 'Growth & Social', icon: 'trending_up' },
-		{ title: 'Sales Lead', focus: 'Leads & CRM', icon: 'support_agent' },
-		{ title: 'Ops Manager', focus: 'Workflow & Logic', icon: 'inventory_2' }
-	];
+	/** Which request the finish path is waiting on — drives the button label. */
+	let phase: 'idle' | 'provisioning' | 'completing' = 'idle';
+	$: launching = phase !== 'idle';
+	/** Soft notices, never blockers: the user still lands in the app. */
+	let notices: string[] = [];
+	/** Outcome of the provisioning call, per role: set once the call returns. */
+	let provisioned: Set<string> | null = null;
+	let provisionFailed = false;
 
-	let launching = false;
-	/** Soft notice, never a blocker: the user still lands in the app. */
-	let notice = '';
+	/** The real team: every department switched on in DeptSetup. Empty is valid — the Chief
+	 * AI always exists and lazy provisioning covers the rest later. */
+	$: specialists = $selectedDepartments;
+
+	/** State is passed in (not read from the closure) so the template re-evaluates the badge
+	 * whenever any of it changes. */
+	function specialistBadge(
+		role: string,
+		currentPhase: typeof phase,
+		provisionedRoles: Set<string> | null,
+		failed: boolean
+	): { label: string; color: string } {
+		if (currentPhase === 'provisioning') return { label: 'SETTING UP', color: 'blue' };
+		if (failed) return { label: 'ADD LATER', color: 'yellow' };
+		if (provisionedRoles) {
+			return provisionedRoles.has(role)
+				? { label: 'ACTIVATED', color: 'green' }
+				: { label: 'ADD LATER', color: 'yellow' };
+		}
+		return { label: 'READY', color: 'purple' };
+	}
 
 	function authToken(): string | undefined {
 		return (($user as { token?: string } | undefined)?.token ??
@@ -36,44 +59,66 @@
 	}
 
 	/**
-	 * Persist the captured answers, seed them into the assistant's memory, and mark
-	 * onboarding complete server-side — then enter the app.
+	 * Finish the wizard: provision the selected departments' agents, then persist the
+	 * captured answers, seed them into the assistant's memory and mark onboarding complete
+	 * server-side — then enter the app.
 	 *
-	 * Failure NEVER traps the user in the wizard: seeding is best-effort on the backend too
-	 * (completion commits even when the seed fails), so anything that goes wrong here just
-	 * shows a soft notice and still routes to /agencyos.
+	 * Failure NEVER traps the user in the wizard: both calls are best-effort (the backend
+	 * commits completion even when the seed fails, and unprovisioned roles are created
+	 * lazily later), so anything that goes wrong here just shows a soft notice and still
+	 * routes to /agencyos.
 	 */
 	async function launch() {
-		if (launching) return;
-		launching = true;
-		notice = '';
+		if (phase !== 'idle') return;
+		notices = [];
+		provisioned = null;
+		provisionFailed = false;
 
 		const token = authToken();
 		const orgId = $activeOrgId;
+		const roles = departmentRoles($selectedDepartments);
 
 		if (token && orgId) {
+			if (roles.length > 0) {
+				phase = 'provisioning';
+				try {
+					const result = await provisionOnboardingAgents(token, orgId, roles);
+					provisioned = new Set((result?.agents ?? []).map((agent) => agent.role));
+					if (roles.some((role) => !provisioned?.has(role))) {
+						notices = [...notices, 'Some of your specialists are still being set up — you can add them later in settings.'];
+					}
+				} catch (error) {
+					// 400 (unknown role), 502 (bridge down) or network — all non-fatal.
+					console.error('Failed to provision onboarding agents', error);
+					provisionFailed = true;
+					notices = [...notices, "We couldn't set up your team just now — you can add agents later in settings."];
+				}
+			}
+
+			phase = 'completing';
 			try {
 				// subAccountId intentionally omitted: P1 seeds at company/business scope.
 				const result = await completeOnboarding(token, orgId, $onboardingAnswers);
 				onboardingComplete.set(true);
 				resetOnboardingAnswers();
 				if (result && result.seeded === false) {
-					notice = "Saved. Your assistant's memory is still syncing — it'll catch up shortly.";
+					notices = [...notices, "Saved. Your assistant's memory is still syncing — it'll catch up shortly."];
 				}
 			} catch (error) {
 				console.error('Failed to complete onboarding', error);
-				notice = "We couldn't save your answers just now. You can add them later in settings.";
+				notices = [...notices, "We couldn't save your answers just now. You can add them later in settings."];
 			}
 		} else {
-			notice = "We couldn't save your answers just now. You can add them later in settings.";
+			phase = 'completing';
+			notices = ["We couldn't save your answers just now. You can add them later in settings."];
 		}
 
 		// A notice deserves a beat on screen before the route change swaps the page out.
-		if (notice) {
+		if (notices.length > 0) {
 			await new Promise((resolve) => setTimeout(resolve, 1600));
 		}
 		await goto('/agencyos');
-		launching = false;
+		phase = 'idle';
 	}
 </script>
 
@@ -104,7 +149,11 @@
 			<div class="relative z-10 flex flex-col items-center text-center">
 				<header class="mb-9 md:mb-12">
 					<h1 class="text-3xl font-bold tracking-tight sm:text-4xl">Your Elite Team is Ready.</h1>
-					<p class="mx-auto mt-4 max-w-2xl text-base text-slate-400 sm:text-lg">Meet your Chief AI and the specialized agents tailored for your agency’s goals.</p>
+					<p class="mx-auto mt-4 max-w-2xl text-base text-slate-400 sm:text-lg">
+						{specialists.length > 0
+							? 'Meet your Chief AI and the specialists for the departments you chose.'
+							: 'Meet your Chief AI. Add specialists anytime from settings — your assistant can bring them on as you need them.'}
+					</p>
 				</header>
 
 				<div class="mb-10 md:mb-14">
@@ -130,18 +179,26 @@
 					</div>
 				</div>
 
-				<div class="mb-8 grid w-full grid-cols-1 gap-4 sm:grid-cols-2 md:mb-12 md:grid-cols-3 md:gap-6">
-					{#each teamMembers as member}
-						<div class="flex flex-col items-center rounded-lg border border-white/10 bg-white/5 p-5 transition-colors hover:bg-white/10">
-							<div class="mb-4 flex h-16 w-16 items-center justify-center rounded-xl border border-white/10 bg-slate-800">
-								<MaterialIcon icon={member.icon} size={30} class="text-[#20B2AA]" />
-							</div>
-							<h4 class="text-sm font-semibold">{member.title}</h4>
-							<p class="mt-1 text-[10px] uppercase tracking-[0.14em] text-slate-400">{member.focus}</p>
-							<StatusBadge label="ACTIVATED" color="green" class="mt-3" />
+				{#if specialists.length > 0}
+					<div class="mb-8 w-full md:mb-12">
+						<p class="mb-4 text-xs font-semibold uppercase tracking-[0.18em] text-slate-400">
+							Chief AI + your {specialists.length} specialist{specialists.length !== 1 ? 's' : ''}
+						</p>
+						<div class="grid w-full grid-cols-1 gap-4 sm:grid-cols-2 md:grid-cols-3 md:gap-6">
+							{#each specialists as dept (dept.id)}
+								{@const badge = specialistBadge(dept.role, phase, provisioned, provisionFailed)}
+								<div class="flex flex-col items-center rounded-lg border border-white/10 bg-white/5 p-5 transition-colors hover:bg-white/10">
+									<div class={`mb-4 flex h-16 w-16 items-center justify-center rounded-xl bg-gradient-to-br shadow-lg shadow-black/20 ${dept.gradient}`}>
+										<MaterialIcon icon={dept.icon} size={30} class="text-white" />
+									</div>
+									<h4 class="text-sm font-semibold">{dept.name}</h4>
+									<p class="mt-1 text-[11px] text-slate-400">{dept.description}</p>
+									<StatusBadge label={badge.label} color={badge.color} class="mt-3" />
+								</div>
+							{/each}
 						</div>
-					{/each}
-				</div>
+					</div>
+				{/if}
 
 				<div class="flex w-full flex-col items-center justify-center gap-4 sm:flex-row">
 					<button on:click={goBack} class="flex items-center gap-2 rounded-lg px-8 py-3 font-medium text-slate-400 transition-all hover:bg-white/5 hover:text-white">
@@ -153,17 +210,21 @@
 						disabled={launching}
 						class="flex w-full items-center justify-center gap-3 rounded-lg bg-[#6961ff] px-8 py-3 font-bold text-white shadow-lg shadow-[#6961ff]/30 transition-all hover:scale-[1.01] hover:bg-[#6961ff]/90 disabled:cursor-wait disabled:opacity-80 disabled:hover:scale-100 sm:w-auto md:px-12 md:py-4"
 					>
-						{launching ? 'Briefing your assistant…' : 'Launch Your Organization'}
+						{phase === 'provisioning'
+							? 'Setting up your team…'
+							: phase === 'completing'
+								? 'Briefing your assistant…'
+								: 'Launch Your Organization'}
 						<MaterialIcon icon={launching ? 'autorenew' : 'rocket_launch'} size={18} class={launching ? 'animate-spin' : ''} />
 					</button>
 				</div>
 
-				{#if notice}
+				{#each notices as notice}
 					<p class="mt-5 flex items-center gap-2 rounded-lg border border-amber-500/20 bg-amber-500/10 px-4 py-2.5 text-sm text-amber-300">
 						<MaterialIcon icon="info" size={16} />
 						{notice}
 					</p>
-				{/if}
+				{/each}
 
 				<p class="mt-8 flex items-center gap-2 text-xs text-slate-500">
 					<MaterialIcon icon="shield" size={14} />

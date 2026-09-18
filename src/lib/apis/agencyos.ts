@@ -378,6 +378,37 @@ export const completeOnboarding = async (
 	);
 };
 
+// ─── Onboarding (P2: explicit agent provisioning) ─────────────
+
+export interface ProvisionedAgent {
+	/** Canonical Cortex role, e.g. `cmo`. */
+	role: string;
+	agentId: string;
+	/** false when the org already had an agent for this role (the call is idempotent). */
+	created: boolean;
+}
+
+export interface ProvisionAgentsResponse {
+	ok: boolean;
+	agents: ProvisionedAgent[];
+	roles: string[];
+}
+
+/** Provision one Cortex agent per canonical role for the org — the departments picked in
+ * the wizard. The backend relays Cortex's 400 for an unknown role and returns 502 when the
+ * bridge is down; callers treat any failure as best-effort (lazy provisioning covers the
+ * rest later). */
+export const provisionOnboardingAgents = async (token: string, orgId: string, roles: string[]) => {
+	return apiCall<ProvisionAgentsResponse>(
+		`${AGENCYOS_API_BASE}/orgs/${orgId}/onboarding/agents`,
+		token,
+		{
+			method: 'POST',
+			body: JSON.stringify({ roles })
+		}
+	);
+};
+
 // ─── First sub-account onboarding (Phase 1.4) ─────────────────
 
 /** Portal page that creates a sub-account, and the marker params of the return hop. */
