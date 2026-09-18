@@ -50,6 +50,26 @@ export const departmentRoles = (depts: Pick<Department, 'role'>[]): string[] => 
 	...new Set(depts.map((d) => d.role.trim()).filter(Boolean))
 ];
 
+/** Switch on every department whose role is in `roles` (the assisted-path suggestion).
+ * Additive: departments the user already picked stay picked, nothing is switched off.
+ * Roles are matched trimmed + case-insensitively; unknown roles are ignored. Returns the
+ * updated list plus the ids that matched, so the caller can tell "no usable suggestion"
+ * apart from "suggested". Pure, so it is unit-testable without a DOM. */
+export const preselectDepartmentsByRole = <T extends Pick<Department, 'id' | 'role' | 'status'>>(
+	depts: T[],
+	roles: string[]
+): { departments: T[]; matchedIds: string[] } => {
+	const wanted = new Set(roles.map((r) => r.trim().toLowerCase()).filter(Boolean));
+	const matchedIds: string[] = [];
+	const updated = depts.map((d) => {
+		const role = d.role.trim().toLowerCase();
+		if (!role || !wanted.has(role)) return d;
+		matchedIds.push(d.id);
+		return { ...d, status: 'active' as const };
+	});
+	return { departments: updated, matchedIds };
+};
+
 // ── Notifications ────────────────────────────────────────────
 export interface Notification {
 	id: string;
@@ -103,6 +123,20 @@ export const onboardingAnswers = writable<OnboardingAnswers>({});
 
 /** Reset the draft so a re-entered wizard never shows a previous run's answers. */
 export const resetOnboardingAnswers = () => onboardingAnswers.set({});
+
+/** Fold interview answers into the draft. Blank answers never clobber something the user
+ * already typed elsewhere in the wizard (the interview reuses the P1 keys). */
+export const mergeOnboardingAnswers = (
+	current: OnboardingAnswers,
+	incoming: Partial<Record<keyof OnboardingAnswers, string>>
+): OnboardingAnswers => {
+	const next: OnboardingAnswers = { ...current };
+	for (const [key, value] of Object.entries(incoming) as [keyof OnboardingAnswers, string | undefined][]) {
+		const trimmed = (value ?? '').trim();
+		if (trimmed) next[key] = trimmed;
+	}
+	return next;
+};
 
 // ── Organization Context ─────────────────────────────────────
 export interface OrgContext {
