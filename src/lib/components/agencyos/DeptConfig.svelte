@@ -50,6 +50,7 @@
 			description: dept.description,
 			status: 'active' as const,
 			agentCount: 1,
+			role: '',
 			model: dept.model_tier
 		};
 	}

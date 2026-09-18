@@ -15,18 +15,40 @@ export interface Department {
 	icon: string;
 	gradient: string;
 	description: string;
+	/** `active` doubles as the onboarding selection: DeptSetup toggles active/inactive and
+	 * FinalSetup provisions an agent for every active department. */
 	status: 'active' | 'inactive' | 'setup';
 	agentCount: number;
+	/** Canonical Cortex role this department provisions (POST /orgs/{id}/onboarding/agents).
+	 * Empty for departments that are not provisionable from onboarding (e.g. the ones
+	 * DeptConfig loads from the API). */
+	role: string;
 	model?: string;
 }
 
+/** The agency department set offered by onboarding, one department per canonical Cortex
+ * role (1:1). All start unselected — the user opts in on the DeptSetup step. */
 const defaultDepartments: Department[] = [
-	{ id: 'sales', name: 'Sales & Admin', icon: 'trending_up', gradient: 'from-blue-500 to-indigo-600', description: 'Revenue, leads, and admin tasks', status: 'active', agentCount: 2 },
-	{ id: 'customer', name: 'Customer Success', icon: 'support_agent', gradient: 'from-green-400 to-emerald-600', description: 'Support tickets and satisfaction', status: 'active', agentCount: 1 },
-	{ id: 'backoffice', name: 'Back Office', icon: 'business_center', gradient: 'from-orange-400 to-red-500', description: 'Finance, HR, and operations', status: 'setup', agentCount: 0 },
+	{ id: 'marketing', role: 'cmo', name: 'Marketing', icon: 'campaign', gradient: 'from-fuchsia-500 to-pink-600', description: 'Campaigns, social, and brand growth.', status: 'inactive', agentCount: 0 },
+	{ id: 'sales', role: 'sales', name: 'Sales', icon: 'payments', gradient: 'from-blue-500 to-indigo-600', description: 'Leads, pipeline, and closing deals.', status: 'inactive', agentCount: 0 },
+	{ id: 'customer-success', role: 'support', name: 'Customer Success', icon: 'support_agent', gradient: 'from-emerald-400 to-teal-600', description: 'Tickets, live chat, and client satisfaction.', status: 'inactive', agentCount: 0 },
+	{ id: 'finance', role: 'cfo', name: 'Finance', icon: 'account_balance', gradient: 'from-orange-400 to-rose-500', description: 'Invoicing, budgets, and cash flow.', status: 'inactive', agentCount: 0 },
+	{ id: 'design', role: 'designer', name: 'Design', icon: 'palette', gradient: 'from-violet-500 to-purple-600', description: 'Creative, visuals, and brand assets.', status: 'inactive', agentCount: 0 },
+	{ id: 'content', role: 'content', name: 'Content', icon: 'edit_note', gradient: 'from-amber-400 to-orange-500', description: 'Copy, blogs, and newsletters.', status: 'inactive', agentCount: 0 },
+	{ id: 'operations', role: 'pm', name: 'Operations', icon: 'inventory_2', gradient: 'from-sky-400 to-cyan-600', description: 'Projects, workflows, and delivery.', status: 'inactive', agentCount: 0 },
+	{ id: 'engineering', role: 'cto', name: 'Engineering', icon: 'code', gradient: 'from-slate-500 to-slate-700', description: 'Web, automation, and technical builds.', status: 'inactive', agentCount: 0 },
 ];
 
 export const departments = writable<Department[]>(defaultDepartments);
+
+/** Departments the user switched on in the onboarding DeptSetup step. */
+export const selectedDepartments = derived(departments, ($d) => $d.filter((x) => x.status === 'active'));
+
+/** Deduped, non-empty canonical roles for a set of departments — the `roles` payload of
+ * the onboarding provisioning call. Pure, so it is unit-testable without a DOM. */
+export const departmentRoles = (depts: Pick<Department, 'role'>[]): string[] => [
+	...new Set(depts.map((d) => d.role.trim()).filter(Boolean))
+];
 
 // ── Notifications ────────────────────────────────────────────
 export interface Notification {

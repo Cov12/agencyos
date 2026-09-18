@@ -6,24 +6,6 @@
 
 	export let step: number;
 
-	const departmentDescriptions: Record<string, string> = {
-		sales: 'Manage leads, contracts, and internal scheduling.',
-		customer: 'Handle tickets, live chat, and client satisfaction.',
-		backoffice: 'Invoicing, payroll, and internal resource planning.'
-	};
-
-	const iconMap: Record<string, string> = {
-		sales: 'payments',
-		customer: 'support_agent',
-		backoffice: 'account_balance'
-	};
-
-	const gradientMap: Record<string, string> = {
-		sales: 'bg-gradient-to-br from-blue-500 to-indigo-600 shadow-lg shadow-blue-500/20',
-		customer: 'bg-gradient-to-br from-emerald-400 to-teal-600 shadow-lg shadow-emerald-500/20',
-		backoffice: 'bg-gradient-to-br from-orange-400 to-rose-500 shadow-lg shadow-orange-500/20'
-	};
-
 	function isChecked(status: string) {
 		return status === 'active';
 	}
@@ -75,12 +57,12 @@
 				{#each $departments as dept}
 					<div class="group flex items-center justify-between rounded-lg border border-white/5 bg-white/5 p-4 transition-all hover:border-[#6961ff]/50">
 						<div class="flex min-w-0 items-center gap-3 sm:gap-4">
-							<div class={`flex h-12 w-12 items-center justify-center rounded-xl ${gradientMap[dept.id] ?? 'bg-slate-700'}`}>
-								<MaterialIcon icon={iconMap[dept.id] ?? dept.icon} size={22} class="text-white" />
+							<div class={`flex h-12 w-12 items-center justify-center rounded-xl bg-gradient-to-br shadow-lg shadow-black/20 ${dept.gradient}`}>
+								<MaterialIcon icon={dept.icon} size={22} class="text-white" />
 							</div>
 							<div class="min-w-0">
 								<h3 class="font-semibold text-white">{dept.name}</h3>
-								<p class="hidden truncate text-sm text-slate-400 sm:block">{departmentDescriptions[dept.id] ?? dept.description}</p>
+								<p class="hidden truncate text-sm text-slate-400 sm:block">{dept.description}</p>
 							</div>
 						</div>
 
