@@ -306,3 +306,61 @@ async def provision_onboarding_agents(
     db.commit()
 
     return {"ok": True, "agents": agents, "roles": roles}
+
+
+# --- P3a: assisted "I'm not sure" path — suggest departments -----------------
+
+
+class SuggestRolesRequest(BaseModel):
+    # Typed `Any` so malformed payloads hit the explicit checks below and answer 400
+    # (pydantic would 422 them before the handler runs) — same call as P2a.
+    answers: Any = None
+    maxRoles: Any = None
+
+
+def _clean_max_roles(raw: Any) -> Optional[int]:
+    """maxRoles is optional; when present it must be a positive int (bool excluded —
+    it is an int subclass). Capped at _MAX_ROLES, the same defensive ceiling as P2a."""
+    if raw is None:
+        return None
+    if isinstance(raw, bool) or not isinstance(raw, int) or raw < 1:
+        raise HTTPException(status_code=400, detail="maxRoles must be a positive integer")
+    return min(raw, _MAX_ROLES)
+
+
+@router.post("/{org_id}/onboarding/suggest", dependencies=[Depends(require_org_access)])
+async def suggest_onboarding_roles(
+    org_id: str,
+    data: SuggestRolesRequest,
+    db: Session = Depends(get_tenant_session),
+):
+    """Suggest departments (canonical roles) from the assisted-interview answers.
+
+    Read-only: it forwards the answers to Cortex's role-map and returns what it proposes.
+    Nothing is provisioned or persisted — once the user confirms, the wizard calls
+    /onboarding/agents as usual.
+
+    Cortex never fails a reachable request (it has a rules fallback), so:
+      200 — {roles, suggestions, model} (roles may be empty);
+      400 — answers missing / not a non-empty object, or a bad maxRoles;
+      502 — the bridge is unreachable, unconfigured, or answered badly; the wizard
+            falls back to manual department selection.
+    """
+    _get_org(db, org_id)
+
+    if not isinstance(data.answers, dict) or not data.answers:
+        raise HTTPException(status_code=400, detail="answers must be a non-empty object")
+    max_roles = _clean_max_roles(data.maxRoles)
+
+    result = await cortex_bridge.suggest_roles(db, org_id, data.answers, max_roles)
+
+    if not result.get("ok"):
+        error = result.get("error") or "role suggestion failed"
+        logger.warning("onboarding: role suggestion failed for org %s: %s", org_id, error)
+        return JSONResponse(status_code=502, content={"error": error})
+
+    return {
+        "roles": result.get("roles") or [],
+        "suggestions": result.get("suggestions") or [],
+        "model": result.get("model"),
+    }

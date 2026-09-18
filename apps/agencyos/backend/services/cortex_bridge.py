@@ -749,3 +749,88 @@ async def ensure_department_agents(
         }
 
     return {"ok": True, "agents": agents}
+
+
+# --- read: suggest departments from interview answers (onboarding P3a) -------
+
+def _role_map_url() -> str:
+    """Cortex CORE route (not a plugin verb): POST {cortex-origin}/api/bridge/role-map,
+    authed by the same x-wbit-bridge-secret as /chat. Derived from the bridge URL's origin
+    exactly like _ensure_department_agents_url(), so one env (CORTEX_BRIDGE_URL) keeps
+    driving every core verb; override with CORTEX_ROLE_MAP_URL."""
+    override = os.environ.get("CORTEX_ROLE_MAP_URL", "").strip()
+    if override:
+        return override
+    m = re.match(r"^(https?://[^/]+)", _bridge_url())
+    origin = m.group(1) if m else _bridge_url().rstrip("/")
+    return origin + "/api/bridge/role-map"
+
+
+async def suggest_roles(
+    db: Optional[Session],
+    org_id: Optional[str],
+    answers: dict,
+    max_roles: Optional[int] = None,
+) -> dict:
+    """Map the assisted-onboarding interview answers to suggested canonical roles.
+
+    POSTs {answers, maxRoles?} to the role-map core route with the shared
+    x-wbit-bridge-secret. It is a PURE mapping call — no companyId, nothing provisioned —
+    so unlike the write verbs it does not resolve a company; db/org_id are accepted for
+    symmetry with the other forwarders and used only for logging.
+
+    Cortex enum-filters to canonical roles and has its own deterministic rules fallback
+    (model:"rules-fallback"), so a reachable Cortex always answers 200 with a (possibly
+    empty) roles list. Any failure here therefore means Cortex is unreachable or broken.
+
+    Returns {ok: True, roles, suggestions, model} or {ok: False, error}. NEVER raises.
+    """
+    secret = _bridge_secret()
+    if not secret:
+        logger.warning("cortex_bridge: role-map skipped — WBIT_BRIDGE_SECRET not configured")
+        return {"ok": False, "error": "WBIT_BRIDGE_SECRET not configured"}
+
+    if not isinstance(answers, dict) or not answers:
+        return {"ok": False, "error": "no answers to map"}
+
+    body: dict = {"answers": answers}
+    if max_roles is not None:
+        body["maxRoles"] = max_roles
+    headers = {"Content-Type": "application/json", "x-wbit-bridge-secret": secret}
+
+    try:
+        async with httpx.AsyncClient(timeout=_timeout_s()) as client:
+            resp = await client.post(_role_map_url(), json=body, headers=headers)
+    except httpx.TimeoutException:
+        logger.warning("cortex_bridge: role-map request timed out (org %s)", org_id)
+        return {"ok": False, "error": "role-map request timed out"}
+    except httpx.RequestError as e:
+        logger.warning(f"cortex_bridge: role-map request error: {e}")
+        return {"ok": False, "error": f"role-map request error: {e}"}
+    except Exception as e:  # defensive: a suggestion must never raise into the route
+        logger.warning(f"cortex_bridge: role-map unexpected error: {e}")
+        return {"ok": False, "error": f"role-map unexpected error: {e}"}
+
+    try:
+        data = resp.json()
+    except ValueError:
+        data = None
+
+    if resp.status_code not in (200, 201):
+        message = _error_message(data, f"role-map returned {resp.status_code}")
+        logger.warning("cortex_bridge: role-map returned %s: %s", resp.status_code, message)
+        return {"ok": False, "error": message}
+
+    roles = data.get("roles") if isinstance(data, dict) else None
+    if not isinstance(roles, list):
+        logger.warning("cortex_bridge: role-map returned a malformed body")
+        return {"ok": False, "error": "role-map returned a malformed body"}
+
+    suggestions = data.get("suggestions")
+    model = data.get("model")
+    return {
+        "ok": True,
+        "roles": roles,
+        "suggestions": suggestions if isinstance(suggestions, list) else [],
+        "model": model if isinstance(model, str) else None,
+    }
