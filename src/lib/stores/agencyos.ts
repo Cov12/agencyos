@@ -70,6 +70,38 @@ export const preselectDepartmentsByRole = <T extends Pick<Department, 'id' | 'ro
 	return { departments: updated, matchedIds };
 };
 
+/** Suggested first tasks per onboarding department (keyed by department id), offered as an
+ * opt-in checklist in FinalSetup. Static for v1. */
+export const STARTER_TASKS: Record<string, string[]> = {
+	marketing: ['Draft a launch announcement plan', 'Audit our current marketing channels'],
+	sales: ['Organize the pipeline stages', 'Review and qualify current leads'],
+	'customer-success': ['Set up the support intake', 'Triage open customer issues'],
+	finance: ["Review this month's budget", 'Set up invoicing'],
+	design: ['Assemble the brand basics', 'Draft the key screens and assets'],
+	content: ['Plan a 2-week content calendar', 'Draft the first posts'],
+	operations: ['Map the core workflows', 'Define the first milestone'],
+	engineering: ['Review the tech stack', 'Scope the first build']
+};
+
+export interface DepartmentStarterTasks {
+	deptId: string;
+	deptName: string;
+	tasks: { title: string }[];
+}
+
+/** Starter tasks for the given (selected) departments, in department order. Departments
+ * without a template are skipped. Pure, so it is unit-testable without a DOM. */
+export const starterTasksFor = (
+	depts: Pick<Department, 'id' | 'name'>[]
+): DepartmentStarterTasks[] =>
+	depts
+		.filter((d) => (STARTER_TASKS[d.id] ?? []).length > 0)
+		.map((d) => ({
+			deptId: d.id,
+			deptName: d.name,
+			tasks: STARTER_TASKS[d.id].map((title) => ({ title }))
+		}));
+
 // ── Notifications ────────────────────────────────────────────
 export interface Notification {
 	id: string;

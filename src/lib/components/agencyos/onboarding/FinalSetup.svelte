@@ -10,14 +10,20 @@
 		onboardingAnswers,
 		onboardingComplete,
 		resetOnboardingAnswers,
-		selectedDepartments
+		selectedDepartments,
+		starterTasksFor
 	} from '$lib/stores/agencyos';
-	import { completeOnboarding, provisionOnboardingAgents } from '$lib/apis/agencyos';
+	import {
+		completeOnboarding,
+		provisionOnboardingAgents,
+		seedOnboardingTasks,
+		type OnboardingStarterTask
+	} from '$lib/apis/agencyos';
 
 	export let step: number;
 
 	/** Which request the finish path is waiting on — drives the button label. */
-	let phase: 'idle' | 'provisioning' | 'completing' = 'idle';
+	let phase: 'idle' | 'provisioning' | 'seeding' | 'completing' = 'idle';
 	$: launching = phase !== 'idle';
 	/** Soft notices, never blockers: the user still lands in the app. */
 	let notices: string[] = [];
@@ -28,6 +34,37 @@
 	/** The real team: every department switched on in DeptSetup. Empty is valid — the Chief
 	 * AI always exists and lazy provisioning covers the rest later. */
 	$: specialists = $selectedDepartments;
+
+	/** Opt-in starter tasks for the selected departments. Nothing is checked by default —
+	 * agents only start work the user explicitly launches here. */
+	$: starterGroups = starterTasksFor(specialists);
+	/** Checked tasks, keyed `deptId::index`. */
+	let checkedTasks = new Set<string>();
+	const taskKey = (deptId: string, index: number) => `${deptId}::${index}`;
+
+	function toggleTask(key: string) {
+		const next = new Set(checkedTasks);
+		if (next.has(key)) next.delete(key);
+		else next.add(key);
+		checkedTasks = next;
+	}
+
+	/** Only tasks of departments still selected count, in roster order. */
+	function selectedStarterTasks(): OnboardingStarterTask[] {
+		return starterGroups.flatMap((group) =>
+			group.tasks
+				.filter((_, index) => checkedTasks.has(taskKey(group.deptId, index)))
+				.map((task) => ({
+					title: task.title,
+					description: `Starter task for the ${group.deptName} department, picked during onboarding.`
+				}))
+		);
+	}
+	$: checkedCount = starterGroups.reduce(
+		(count, group) =>
+			count + group.tasks.filter((_, index) => checkedTasks.has(taskKey(group.deptId, index))).length,
+		0
+	);
 
 	/** State is passed in (not read from the closure) so the template re-evaluates the badge
 	 * whenever any of it changes. */
@@ -59,11 +96,12 @@
 	}
 
 	/**
-	 * Finish the wizard: provision the selected departments' agents, then persist the
-	 * captured answers, seed them into the assistant's memory and mark onboarding complete
-	 * server-side — then enter the app.
+	 * Finish the wizard: provision the selected departments' agents, file any starter tasks
+	 * the user ticked as CEO handoff tickets, then persist the captured answers, seed them
+	 * into the assistant's memory and mark onboarding complete server-side — then enter the
+	 * app.
 	 *
-	 * Failure NEVER traps the user in the wizard: both calls are best-effort (the backend
+	 * Failure NEVER traps the user in the wizard: every call is best-effort (the backend
 	 * commits completion even when the seed fails, and unprovisioned roles are created
 	 * lazily later), so anything that goes wrong here just shows a soft notice and still
 	 * routes to /agencyos.
@@ -77,6 +115,7 @@
 		const token = authToken();
 		const orgId = $activeOrgId;
 		const roles = departmentRoles($selectedDepartments);
+		const tasks = selectedStarterTasks();
 
 		if (token && orgId) {
 			if (roles.length > 0) {
@@ -92,6 +131,18 @@
 					console.error('Failed to provision onboarding agents', error);
 					provisionFailed = true;
 					notices = [...notices, "We couldn't set up your team just now — you can add agents later in settings."];
+				}
+			}
+
+			// Opt-in only: nothing checked means nothing is filed.
+			if (tasks.length > 0) {
+				phase = 'seeding';
+				try {
+					await seedOnboardingTasks(token, orgId, tasks);
+				} catch (error) {
+					// 502 (tracker down) or network — non-fatal.
+					console.error('Failed to seed onboarding starter tasks', error);
+					notices = [...notices, "We couldn't launch those tasks just now — you can start them from chat later."];
 				}
 			}
 
@@ -200,6 +251,58 @@
 					</div>
 				{/if}
 
+				{#if starterGroups.length > 0}
+					<div class="mb-8 w-full text-left md:mb-12">
+						<div class="mb-4 text-center">
+							<h3 class="text-lg font-semibold">Kick off some work?</h3>
+							<p class="mt-1 text-sm text-slate-400">
+								Pick any to hand to your team now — or skip and start later.
+							</p>
+						</div>
+						<div class="grid w-full grid-cols-1 gap-4 sm:grid-cols-2">
+							{#each starterGroups as group (group.deptId)}
+								<div class="rounded-lg border border-white/10 bg-white/5 p-4">
+									<p class="mb-3 text-xs font-semibold uppercase tracking-[0.18em] text-[#6961ff]">{group.deptName}</p>
+									<div class="flex flex-col gap-2">
+										{#each group.tasks as task, index}
+											{@const key = taskKey(group.deptId, index)}
+											{@const checked = checkedTasks.has(key)}
+											<button
+												type="button"
+												role="checkbox"
+												aria-checked={checked}
+												disabled={launching}
+												on:click={() => toggleTask(key)}
+												class={`flex items-center gap-3 rounded-lg border px-3 py-2.5 text-left text-sm transition-all disabled:cursor-not-allowed disabled:opacity-60 ${
+													checked
+														? 'border-[#6961ff]/60 bg-[#6961ff]/15 text-white'
+														: 'border-white/10 bg-white/[0.03] text-slate-300 hover:border-white/20 hover:bg-white/10'
+												}`}
+											>
+												<span
+													class={`flex h-5 w-5 shrink-0 items-center justify-center rounded border transition-colors ${
+														checked ? 'border-[#6961ff] bg-[#6961ff]' : 'border-white/25 bg-transparent'
+													}`}
+												>
+													{#if checked}
+														<MaterialIcon icon="check" size={14} class="text-white" />
+													{/if}
+												</span>
+												<span>{task.title}</span>
+											</button>
+										{/each}
+									</div>
+								</div>
+							{/each}
+						</div>
+						<p class="mt-3 text-center text-xs text-slate-500">
+							{checkedCount > 0
+								? `${checkedCount} task${checkedCount !== 1 ? 's' : ''} will be handed to your Chief AI when you launch.`
+								: 'Nothing selected — no work starts until you ask for it.'}
+						</p>
+					</div>
+				{/if}
+
 				<div class="flex w-full flex-col items-center justify-center gap-4 sm:flex-row">
 					<button on:click={goBack} class="flex items-center gap-2 rounded-lg px-8 py-3 font-medium text-slate-400 transition-all hover:bg-white/5 hover:text-white">
 						<MaterialIcon icon="arrow_back" size={16} />
@@ -212,9 +315,11 @@
 					>
 						{phase === 'provisioning'
 							? 'Setting up your team…'
-							: phase === 'completing'
-								? 'Briefing your assistant…'
-								: 'Launch Your Organization'}
+							: phase === 'seeding'
+								? 'Launching your tasks…'
+								: phase === 'completing'
+									? 'Briefing your assistant…'
+									: 'Launch Your Organization'}
 						<MaterialIcon icon={launching ? 'autorenew' : 'rocket_launch'} size={18} class={launching ? 'animate-spin' : ''} />
 					</button>
 				</div>
