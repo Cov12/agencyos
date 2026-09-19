@@ -444,6 +444,42 @@ export const suggestOnboardingRoles = async (
 	);
 };
 
+// ─── Onboarding (P4: opt-in starter tasks) ────────────────────
+
+export interface OnboardingStarterTask {
+	title: string;
+	description?: string;
+	priority?: string;
+}
+
+export interface SeededOnboardingIssue {
+	id: string;
+	identifier: string;
+	title: string;
+}
+
+export interface SeedOnboardingTasksResponse {
+	issues: SeededOnboardingIssue[];
+}
+
+/** File the starter tasks the user explicitly ticked in FinalSetup as CEO handoff tickets
+ * (1..20 per call). Returns 502 when the tracker is unreachable; callers treat any failure
+ * as best-effort — the user can start the work from chat later. */
+export const seedOnboardingTasks = async (
+	token: string,
+	orgId: string,
+	tasks: OnboardingStarterTask[]
+) => {
+	return apiCall<SeedOnboardingTasksResponse>(
+		`${AGENCYOS_API_BASE}/orgs/${orgId}/onboarding/tasks`,
+		token,
+		{
+			method: 'POST',
+			body: JSON.stringify({ tasks })
+		}
+	);
+};
+
 // ─── First sub-account onboarding (Phase 1.4) ─────────────────
 
 /** Portal page that creates a sub-account, and the marker params of the return hop. */
