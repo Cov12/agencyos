@@ -834,3 +834,91 @@ async def suggest_roles(
         "suggestions": suggestions if isinstance(suggestions, list) else [],
         "model": model if isinstance(model, str) else None,
     }
+
+
+# --- write: file the user's opt-in starter tasks (onboarding P4b) -----------
+
+def _seed_tasks_url() -> str:
+    """Cortex CORE route (not a plugin verb): POST {cortex-origin}/api/bridge/seed-tasks,
+    authed by the same x-wbit-bridge-secret as /chat. Derived from the bridge URL's origin
+    exactly like _ensure_department_agents_url(), so one env (CORTEX_BRIDGE_URL) keeps
+    driving every core verb; override with CORTEX_SEED_TASKS_URL."""
+    override = os.environ.get("CORTEX_SEED_TASKS_URL", "").strip()
+    if override:
+        return override
+    m = re.match(r"^(https?://[^/]+)", _bridge_url())
+    origin = m.group(1) if m else _bridge_url().rstrip("/")
+    return origin + "/api/bridge/seed-tasks"
+
+
+async def seed_tasks(
+    db: Optional[Session],
+    org_id: Optional[str],
+    tasks: list,
+) -> dict:
+    """File the user's confirmed starter tasks as issues in this org's Cortex company.
+
+    Resolves companyId the SAME way chat does (_resolve_company_for_chat), then POSTs
+    {companyId, tasks: [{title, description?, priority?}]} to the seed-tasks core route
+    with the shared x-wbit-bridge-secret. Cortex files each task as a CEO-assigned todo.
+
+    Like ensure_department_agents, a failure here is MEANINGFUL (the user launched these
+    tasks), so it is reported, never swallowed. Returns
+    {ok: True, issues: [{id, identifier, title}, ...]} or
+    {ok: False, error: str, status: int | None}, where `status` is Cortex's HTTP status
+    when it answered and None when the request never got an answer.
+
+    It NEVER raises into the request path — every transport/parse failure is returned
+    as {ok: False}.
+    """
+    secret = _bridge_secret()
+    if not secret:
+        logger.warning("cortex_bridge: seed-tasks skipped — WBIT_BRIDGE_SECRET not configured")
+        return {"ok": False, "error": "WBIT_BRIDGE_SECRET not configured", "status": None}
+
+    if not tasks:
+        return {"ok": False, "error": "no tasks to seed", "status": None}
+
+    company_id = _resolve_company_for_chat(db, org_id)
+    if not company_id:
+        logger.warning("cortex_bridge: seed-tasks skipped — no company resolved")
+        return {"ok": False, "error": "no company resolved for org", "status": None}
+
+    body = {"companyId": company_id, "tasks": tasks}
+    headers = {"Content-Type": "application/json", "x-wbit-bridge-secret": secret}
+
+    try:
+        async with httpx.AsyncClient(timeout=_timeout_s()) as client:
+            resp = await client.post(_seed_tasks_url(), json=body, headers=headers)
+    except httpx.TimeoutException:
+        logger.warning("cortex_bridge: seed-tasks request timed out")
+        return {"ok": False, "error": "seed-tasks request timed out", "status": None}
+    except httpx.RequestError as e:
+        logger.warning(f"cortex_bridge: seed-tasks request error: {e}")
+        return {"ok": False, "error": f"seed-tasks request error: {e}", "status": None}
+    except Exception as e:  # defensive: seeding must never raise into the route
+        logger.warning(f"cortex_bridge: seed-tasks unexpected error: {e}")
+        return {"ok": False, "error": f"seed-tasks unexpected error: {e}", "status": None}
+
+    try:
+        data = resp.json()
+    except ValueError:
+        data = None
+
+    if resp.status_code not in (200, 201):
+        message = _error_message(data, f"seed-tasks returned {resp.status_code}")
+        logger.warning(
+            "cortex_bridge: seed-tasks returned %s: %s", resp.status_code, message
+        )
+        return {"ok": False, "error": message, "status": resp.status_code}
+
+    issues = data.get("issues") if isinstance(data, dict) else None
+    if not isinstance(issues, list):
+        logger.warning("cortex_bridge: seed-tasks returned no issues list")
+        return {
+            "ok": False,
+            "error": "seed-tasks returned no issues",
+            "status": resp.status_code,
+        }
+
+    return {"ok": True, "issues": issues}

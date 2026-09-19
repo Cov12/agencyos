@@ -50,6 +50,14 @@ ONBOARDING_PROFILE_KEY = "onboardingProfile"
 # writes order-independent (the P2b wizard calls both).
 ONBOARDING_AGENTS_KEY = "onboardingAgents"
 
+# Key holding a lightweight marker of the starter tasks filed for this org (P4b). Same
+# sibling-key reasoning as ONBOARDING_AGENTS_KEY: never nested inside ONBOARDING_KEY.
+ONBOARDING_TASKS_KEY = "onboardingTasks"
+
+# Cap on one starter-task request — the wizard offers a handful; this stops an abusive
+# payload from filing an unbounded number of issues.
+_MAX_TASKS = 20
+
 # Defensive cap on one provisioning request. Cortex owns the canonical role taxonomy and
 # it is far smaller than this; the cap only stops an abusive payload from fanning out.
 _MAX_ROLES = 32
@@ -364,3 +372,95 @@ async def suggest_onboarding_roles(
         "suggestions": result.get("suggestions") or [],
         "model": result.get("model"),
     }
+
+
+# --- P4b: opt-in starter tasks -----------------------------------------------
+
+
+class SeedTasksRequest(BaseModel):
+    # Typed `Any` so malformed payloads hit the explicit checks in _clean_tasks() and
+    # answer 400 (pydantic would 422 them before the handler runs) — same call as P2a.
+    tasks: Any = None
+
+
+def _clean_tasks(raw: Any) -> list[dict]:
+    """Validate and normalize the requested tasks, or 400.
+
+    Shape only: a non-empty list (capped) of objects, each with a non-blank string
+    `title` and optional string `description`/`priority`. Values are trimmed, blank
+    optionals are dropped, and unknown keys are not forwarded. Which priorities are legal
+    is Cortex's call — it 400s a bad one and we relay that.
+    """
+    if not isinstance(raw, list):
+        raise HTTPException(status_code=400, detail="tasks must be a list")
+    if not raw:
+        raise HTTPException(status_code=400, detail="tasks must not be empty")
+    if len(raw) > _MAX_TASKS:
+        raise HTTPException(status_code=400, detail=f"too many tasks (max {_MAX_TASKS})")
+
+    tasks: list[dict] = []
+    for entry in raw:
+        if not isinstance(entry, dict):
+            raise HTTPException(status_code=400, detail="each task must be an object")
+        title = entry.get("title")
+        if not isinstance(title, str) or not title.strip():
+            raise HTTPException(status_code=400, detail="each task needs a non-empty title")
+        task = {"title": title.strip()}
+        for key in ("description", "priority"):
+            value = entry.get(key)
+            if value is None:
+                continue
+            if not isinstance(value, str):
+                raise HTTPException(status_code=400, detail=f"task {key} must be a string")
+            if value.strip():
+                task[key] = value.strip()
+        tasks.append(task)
+    return tasks
+
+
+@router.post("/{org_id}/onboarding/tasks", dependencies=[Depends(require_org_access)])
+async def seed_onboarding_tasks(
+    org_id: str,
+    data: SeedTasksRequest,
+    db: Session = Depends(get_tenant_session),
+):
+    """File the user's confirmed starter tasks as CEO-assigned todo issues in Cortex.
+
+    Explicit and opt-in: the user launched these, so a failure surfaces (the wizard shows
+    a retryable notice) rather than being swallowed like P1 seeding.
+
+    Error mapping:
+      400 — bad shape here, or a Cortex 400 relayed with its own message;
+      502 — the bridge is unreachable, unconfigured, or failed (5xx / malformed body);
+      200 — {issues: [{id, identifier, title}]}.
+    """
+    org = _get_org(db, org_id)
+    tasks = _clean_tasks(data.tasks)
+
+    result = await cortex_bridge.seed_tasks(db, org_id, tasks)
+
+    if not result.get("ok"):
+        error = result.get("error") or "starter task seeding failed"
+        status = result.get("status")
+        logger.warning(
+            "onboarding: starter task seeding failed for org %s (%s tasks, status=%s): %s",
+            org_id, len(tasks), status, error,
+        )
+        # Only a Cortex 400 is a REQUEST problem; anything else (incl. a 401 from a
+        # mismatched bridge secret) is upstream, so the wizard can offer a retry.
+        if status == 400:
+            raise HTTPException(status_code=400, detail=error)
+        return JSONResponse(status_code=502, content={"error": error})
+
+    issues = result.get("issues") or []
+
+    # Lightweight marker only — the issues themselves live in Cortex. New dict, never an
+    # in-place mutation (the JSON column is not mutation-tracked); every key is preserved.
+    current = org.settings if isinstance(org.settings, dict) else {}
+    updated = {**current}
+    updated[ONBOARDING_TASKS_KEY] = {"seededAt": now_ms(), "count": len(issues)}
+    org.settings = updated
+    org.updated_at = now_ms()
+    db.commit()
+
+    return {"issues": issues}
