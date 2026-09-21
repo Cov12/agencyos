@@ -151,7 +151,7 @@
 
 <svelte:head>
 	<title>
-		{$i18n.t('AgencyOS')} • {$WEBUI_NAME}
+		{$WEBUI_NAME}
 	</title>
 </svelte:head>
 

@@ -55,7 +55,7 @@
 </script>
 
 <svelte:head>
-	<title>{$i18n.t('New Note')} • AgencyOS • {$WEBUI_NAME}</title>
+	<title>{$i18n.t('New Note')} • {$WEBUI_NAME}</title>
 </svelte:head>
 
 <div class="flex h-full min-h-[240px] items-center justify-center text-slate-400">
