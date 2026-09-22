@@ -108,11 +108,11 @@
 	}
 
 	function goBack() {
-		goto('/agencyos/onboarding/step1');
+		goto('/agencyos/onboarding/step2');
 	}
 
 	function goNext() {
-		goto('/agencyos/onboarding/step3');
+		goto('/agencyos/onboarding/step4');
 	}
 </script>
 
@@ -123,8 +123,8 @@
 	<div class="relative mx-auto w-full max-w-3xl">
 		<div class="mb-8 flex items-center justify-center gap-3">
 			<div class="h-2 w-2 rounded-full bg-[#6961ff]/40"></div>
+			<div class="h-2 w-2 rounded-full bg-[#6961ff]/40"></div>
 			<div class="h-2 w-2 rounded-full bg-[#6961ff] ring-4 ring-[#6961ff]/20"></div>
-			<div class="h-2 w-2 rounded-full bg-slate-700"></div>
 			<div class="h-2 w-2 rounded-full bg-slate-700"></div>
 			<span class="ml-2 text-xs font-semibold uppercase tracking-[0.18em] text-[#6961ff]">Step {step} of 4</span>
 		</div>
