@@ -39,7 +39,11 @@
 
 	// Fields supplied by the account render read-only.
 	const nameLocked = !!accountName;
-	const industryLocked = !!matchedIndustry;
+	// Lock on ANY industry the account carries — Portal and AgencyOS use different industry
+	// taxonomies, so a Portal value often won't map to one of the options above. When it
+	// doesn't, we still lock and display the raw account value rather than making the user
+	// re-pick from a mismatched list.
+	const industryLocked = !!accountIndustry;
 	const logoLocked = !!accountLogo;
 	const anyLocked = nameLocked || industryLocked || logoLocked;
 
@@ -128,7 +132,7 @@
 					</div>
 					{#if industryLocked}
 						<div class="flex h-12 w-full items-center rounded-lg border border-slate-700/40 bg-slate-800/20 px-4 text-slate-300">
-							{matchedIndustry?.label}
+							{matchedIndustry?.label ?? accountIndustry}
 						</div>
 					{:else}
 						<div class="relative">
