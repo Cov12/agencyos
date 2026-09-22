@@ -265,6 +265,27 @@ class OrganizationsService:
                         org.slug = incoming_slug
                         changed = True
 
+            profile_updates = {}
+            incoming_logo = OrganizationsService._clean_str(payload.get("org_logo"))
+            if incoming_logo:
+                profile_updates["logo"] = incoming_logo
+            incoming_industry = OrganizationsService._clean_str(
+                payload.get("org_industry")
+            )
+            if incoming_industry:
+                profile_updates["industry"] = incoming_industry
+            if profile_updates:
+                # Org profile (logo/industry) is captured once at Portal signup and rides the
+                # JWT as org_logo / org_industry. Stash it in settings (no schema column, so no
+                # SQLite ALTER) so downstream surfaces — the onboarding wizard — can prefill and
+                # lock it instead of re-asking. Merge into a fresh dict so JSON dirty-tracking
+                # fires and sibling keys (onboarding state) are preserved.
+                current = dict(org.settings) if isinstance(org.settings, dict) else {}
+                if any(current.get(k) != v for k, v in profile_updates.items()):
+                    current.update(profile_updates)
+                    org.settings = current
+                    changed = True
+
             if changed:
                 org.updated_at = now_ms()
                 db.commit()
@@ -312,11 +333,11 @@ class OrganizationsService:
                     slug=org_slug,
                     portal_org_id=portal_org_cuid,
                 )
-            else:
-                # Already bound to this Portal org: keep the DISPLAY identity fresh, so a
-                # placeholder org ('My Organization'/'default') that was bound to a real
-                # Portal org later stops rendering as the placeholder (agencyos#79).
-                OrganizationsService._refresh_org_identity(db, org, payload)
+            # Keep the DISPLAY identity + profile fresh on every login: for a just-created org
+            # this stamps logo/industry into settings; for an existing one it also un-sticks a
+            # placeholder name/slug ('My Organization'/'default') once bound to a real Portal
+            # org (agencyos#79).
+            OrganizationsService._refresh_org_identity(db, org, payload)
             OrganizationsService.upsert_member(
                 db,
                 org_id=org.id,

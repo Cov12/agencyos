@@ -176,6 +176,11 @@ export interface OrgContext {
 	name: string;
 	slug: string;
 	plan: string;
+	// Org profile captured at Portal signup and surfaced by the org API (derived from
+	// settings). Present when the account carries it; the onboarding wizard prefills + locks
+	// these instead of re-asking. `industry` arrives once Portal persists it + adds the claim.
+	logo?: string | null;
+	industry?: string | null;
 }
 
 export const activeOrg = writable<OrgContext | null>(null);
