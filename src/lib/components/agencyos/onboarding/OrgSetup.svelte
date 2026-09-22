@@ -6,12 +6,20 @@
 
 	export let step: number;
 
+	// Mirrors Portal's signup industry list (the source of truth) so the fallback dropdown
+	// here — shown only when the account carries no industry — matches what Portal offers, and
+	// a locked value maps cleanly. Portal stores the plain label string, so value === label.
 	const industryOptions = [
-		{ value: 'creative', label: 'Creative Agency' },
-		{ value: 'software', label: 'Software House' },
-		{ value: 'marketing', label: 'Digital Marketing' },
-		{ value: 'consulting', label: 'Consulting' },
-		{ value: 'other', label: 'Other' }
+		{ value: 'Marketing & Advertising', label: 'Marketing & Advertising' },
+		{ value: 'Technology & Software', label: 'Technology & Software' },
+		{ value: 'Consulting & Professional Services', label: 'Consulting & Professional Services' },
+		{ value: 'Real Estate', label: 'Real Estate' },
+		{ value: 'Healthcare', label: 'Healthcare' },
+		{ value: 'E-commerce & Retail', label: 'E-commerce & Retail' },
+		{ value: 'Financial Services', label: 'Financial Services' },
+		{ value: 'Education', label: 'Education' },
+		{ value: 'Manufacturing', label: 'Manufacturing' },
+		{ value: 'Other', label: 'Other' }
 	];
 
 	// Org identity (name / industry / logo) is captured once at Portal signup and flows onto
