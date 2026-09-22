@@ -97,7 +97,17 @@ async def list_organizations(
         else:
             orgs = OrganizationsService.list_orgs(db)
     return [
-        {"id": o.id, "name": o.name, "slug": o.slug, "plan": o.plan}
+        {
+            "id": o.id,
+            "name": o.name,
+            "slug": o.slug,
+            "plan": o.plan,
+            # Org profile captured once at Portal signup, stamped into settings on login.
+            # Surfaced top-level so the active-org store carries it and the onboarding wizard
+            # can prefill + lock it instead of re-asking.
+            "logo": (o.settings or {}).get("logo"),
+            "industry": (o.settings or {}).get("industry"),
+        }
         for o in orgs
     ]
 
@@ -143,7 +153,15 @@ async def get_organization(
     org = OrganizationsService.get_org_by_id(db, org_id)
     if not org:
         raise HTTPException(status_code=404, detail="Organization not found")
-    return {"id": org.id, "name": org.name, "slug": org.slug, "plan": org.plan, "settings": org.settings}
+    return {
+        "id": org.id,
+        "name": org.name,
+        "slug": org.slug,
+        "plan": org.plan,
+        "logo": (org.settings or {}).get("logo"),
+        "industry": (org.settings or {}).get("industry"),
+        "settings": org.settings,
+    }
 
 
 @router.get("/{org_id}/subaccounts", dependencies=[Depends(require_org_access)])
