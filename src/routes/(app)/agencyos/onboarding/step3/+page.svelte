@@ -1,5 +1,9 @@
 <script lang="ts">
-	import ConnectTools from '$lib/components/agencyos/onboarding/ConnectTools.svelte';
+	// Step 3 — department selection + assisted "help me decide" interview. This replaces the
+	// removed "Connect Your Workflow" mock. DeptSetup was orphaned when P1 swapped step 2 from
+	// DeptSetup to ContextSetup and never re-homed it; re-mounting it here re-activates the
+	// explicit (P2) and assisted (P3) agent-provisioning paths the wizard was built around.
+	import DeptSetup from '$lib/components/agencyos/onboarding/DeptSetup.svelte';
 </script>
 
-<ConnectTools step={3} />
+<DeptSetup step={3} />
