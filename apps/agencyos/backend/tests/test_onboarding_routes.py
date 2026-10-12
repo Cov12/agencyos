@@ -341,6 +341,25 @@ def test_get_defaults_to_not_completed(client):
     assert response.json() == {"completed": False, "completedAt": None, "version": 1}
 
 
+def test_get_treats_orgs_from_before_the_gate_as_onboarded(client, db_session):
+    # An org created before the gate went live never recorded completion; it must not be
+    # sent through first-run onboarding.
+    org = db_session.get(AgencyOSOrganization, TEST_ORG_ID)
+    org.created_at = onboarding.ONBOARDING_GATE_LIVE_AT_MS - 1
+    db_session.commit()
+    response = client.get(f"/api/agencyos/orgs/{TEST_ORG_ID}/onboarding", headers=_auth())
+    assert response.status_code == 200, response.text
+    assert response.json() == {"completed": True, "completedAt": None, "version": 1}
+
+
+def test_get_new_org_after_the_gate_is_not_onboarded(client, db_session):
+    org = db_session.get(AgencyOSOrganization, TEST_ORG_ID)
+    org.created_at = onboarding.ONBOARDING_GATE_LIVE_AT_MS + 1
+    db_session.commit()
+    response = client.get(f"/api/agencyos/orgs/{TEST_ORG_ID}/onboarding", headers=_auth())
+    assert response.json()["completed"] is False
+
+
 def test_get_returns_state_after_post(client, monkeypatch):
     _patch_httpx(monkeypatch, _FakeClient(_FakeResponse(200, {})))
 

@@ -54,6 +54,12 @@ ONBOARDING_AGENTS_KEY = "onboardingAgents"
 # sibling-key reasoning as ONBOARDING_AGENTS_KEY: never nested inside ONBOARDING_KEY.
 ONBOARDING_TASKS_KEY = "onboardingTasks"
 
+# When the onboarding gate went live (agencyos #110 merged, 2026-09-22T01:00:58Z), in
+# epoch ms like AgencyOSOrganization.created_at. Orgs created before it were already in
+# use but never recorded completion (the wizard had no entry point), so without this
+# they'd be sent through first-run onboarding on their next visit.
+ONBOARDING_GATE_LIVE_AT_MS = 1790038858000
+
 # Cap on one starter-task request — the wizard offers a handful; this stops an abusive
 # payload from filing an unbounded number of issues.
 _MAX_TASKS = 20
@@ -147,7 +153,9 @@ def _onboarding_state(org: AgencyOSOrganization) -> dict:
     settings = org.settings if isinstance(org.settings, dict) else {}
     state = settings.get(ONBOARDING_KEY)
     if not isinstance(state, dict):
-        return {"completed": False, "completedAt": None, "version": ONBOARDING_VERSION}
+        created_at = org.created_at or 0
+        legacy = 0 < created_at < ONBOARDING_GATE_LIVE_AT_MS
+        return {"completed": legacy, "completedAt": None, "version": ONBOARDING_VERSION}
     return {
         "completed": bool(state.get("completed", False)),
         "completedAt": state.get("completedAt"),
