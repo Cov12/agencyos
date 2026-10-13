@@ -12,6 +12,12 @@
 	}
 
 	$: stats = hasEmptyState(data) ? null : data;
+	// A brand-new workspace: nothing recorded yet, so a grid of zeros says less than a sentence.
+	$: noData =
+		!!stats &&
+		(stats.contacts?.total ?? 0) === 0 &&
+		(stats.tickets?.total ?? 0) === 0 &&
+		(stats.pipelines?.count ?? 0) === 0;
 	$: cards = [
 		{ label: 'contacts', value: stats?.contacts.total ?? 0, tone: 'text-cyan-300' },
 		{ label: 'new contacts (30d)', value: stats?.contacts.recentCount ?? 0, tone: 'text-emerald-300' },
@@ -31,6 +37,8 @@
 
 {#if hasEmptyState(data)}
 	<p class="text-sm text-slate-500">{data.emptyState}</p>
+{:else if noData}
+	<p class="text-sm text-slate-500">No CRM data yet. Contacts, deals and pipelines will show here.</p>
 {:else if data}
 	<div class="grid grid-cols-2 gap-3">
 		{#each cards as card}

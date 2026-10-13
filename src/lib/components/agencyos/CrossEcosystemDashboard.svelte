@@ -19,6 +19,7 @@
 	import MaterialIcon from '$lib/components/agencyos/shared/MaterialIcon.svelte';
 	import SubAccountScopeSelector from '$lib/components/agencyos/SubAccountScopeSelector.svelte';
 	import { dashboardWidgets } from '$lib/components/agencyos/dashboard/registry';
+	import { classifyWidgetError } from '$lib/components/agencyos/dashboard/widgetErrors';
 
 	// Sub-account scope (local, read-only — not persisted)
 	let subAccounts: OrgSubAccount[] = [];
@@ -26,9 +27,22 @@
 	let loadingSubAccounts = false;
 
 	// Per-widget state, keyed by widget id
-	type WidgetState = { loading: boolean; error: boolean; unavailable: boolean; data: unknown };
+	type WidgetState = {
+		loading: boolean;
+		error: boolean;
+		unavailable: boolean;
+		notSetUp: boolean;
+		data: unknown;
+	};
+	const LOADING: WidgetState = {
+		loading: true,
+		error: false,
+		unavailable: false,
+		notSetUp: false,
+		data: null
+	};
 	let widgetStates: Record<string, WidgetState> = Object.fromEntries(
-		dashboardWidgets.map((w) => [w.id, { loading: true, error: false, unavailable: false, data: null }])
+		dashboardWidgets.map((w) => [w.id, { ...LOADING }])
 	);
 
 	// Predefined span classes (Tailwind can't purge dynamic class names)
@@ -60,21 +74,6 @@
 		}
 	}
 
-	// A widget's app may simply not be enabled for this workspace (entitlement/authorization
-	// denial) — that is EXPECTED, not a failure. The backend surfaces it as an HTTP 403 whose
-	// `detail` (which apiCall throws) is "App access denied: <APP>" / "Org access denied" /
-	// "Org admin access required". Treat those as a muted "not enabled" state, not a red error.
-	function isNotEnabled(err: unknown): boolean {
-		const msg = String(
-			typeof err === 'string'
-				? err
-				: (err && typeof err === 'object' && 'detail' in err
-						? (err as { detail?: unknown }).detail
-						: (err as { message?: unknown })?.message) ?? err
-		);
-		return /access denied|access required/i.test(msg);
-	}
-
 	async function loadWidgets() {
 		const token = getToken();
 		if (!token || !$activeOrgId) return;
@@ -82,17 +81,25 @@
 		// Parallel load — each widget resolves/fails independently.
 		await Promise.all(
 			dashboardWidgets.map(async (widget) => {
-				widgetStates[widget.id] = { loading: true, error: false, unavailable: false, data: null };
+				widgetStates[widget.id] = { ...LOADING };
 				widgetStates = widgetStates;
 				try {
 					const data = await widget.load(token, $activeOrgId, activeSubAccountId);
-					widgetStates[widget.id] = { loading: false, error: false, unavailable: false, data };
+					widgetStates[widget.id] = { ...LOADING, loading: false, data };
 				} catch (error) {
-					const unavailable = isNotEnabled(error);
-					if (!unavailable) {
+					// Expected states (app not enabled, not set up in WorkPipe yet) render muted;
+					// only real failures are red. See dashboard/widgetErrors.ts.
+					const kind = classifyWidgetError(error);
+					if (kind === 'error') {
 						console.error(`Failed to load dashboard widget "${widget.id}"`, error);
 					}
-					widgetStates[widget.id] = { loading: false, error: !unavailable, unavailable, data: null };
+					widgetStates[widget.id] = {
+						...LOADING,
+						loading: false,
+						error: kind === 'error',
+						unavailable: kind === 'unavailable',
+						notSetUp: kind === 'not-set-up'
+					};
 				}
 				widgetStates = widgetStates;
 			})
@@ -156,6 +163,11 @@
 					<div class="flex items-center gap-2 text-sm text-slate-500 py-2">
 						<MaterialIcon icon="lock" size={18} />
 						Not enabled for this workspace.
+					</div>
+				{:else if widgetStates[widget.id]?.notSetUp}
+					<div class="flex items-center gap-2 text-sm text-slate-500 py-2">
+						<MaterialIcon icon="info" size={18} />
+						Not set up in WorkPipe yet. Open WorkPipe to get started.
 					</div>
 				{:else if widgetStates[widget.id]?.error}
 					<div class="flex items-center gap-2 text-sm text-red-400 py-2">

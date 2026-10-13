@@ -17,6 +17,8 @@
 
 {#if isEmpty(data)}
 	<p class="text-sm text-slate-500">{data.emptyState}</p>
+{:else if fn && fn.count === 0}
+	<p class="text-sm text-slate-500">No funnels yet.</p>
 {:else if fn}
 	<div class="grid grid-cols-3 gap-3">
 		<div class="rounded-xl border border-white/8 bg-white/[0.03] px-3 py-3">

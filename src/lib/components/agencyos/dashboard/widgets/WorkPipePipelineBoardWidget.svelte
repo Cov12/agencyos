@@ -74,5 +74,5 @@
 		{/if}
 	</div>
 {:else}
-	<p class="text-sm text-slate-500">No pipelines available in this scope.</p>
+	<p class="text-sm text-slate-500">No pipelines yet.</p>
 {/if}

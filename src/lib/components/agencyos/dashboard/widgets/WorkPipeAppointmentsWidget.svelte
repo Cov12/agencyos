@@ -36,5 +36,5 @@
 		<p class="text-[11px] text-slate-500">{appts.upcomingCount} upcoming in total.</p>
 	{/if}
 {:else}
-	<p class="text-sm text-slate-500">No upcoming appointments.</p>
+	<p class="text-sm text-slate-500">No upcoming appointments yet.</p>
 {/if}

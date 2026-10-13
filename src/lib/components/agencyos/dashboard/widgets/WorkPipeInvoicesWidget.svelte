@@ -21,6 +21,8 @@
 
 {#if isEmpty(data)}
 	<p class="text-sm text-slate-500">{data.emptyState}</p>
+{:else if inv && inv.count === 0}
+	<p class="text-sm text-slate-500">No invoices yet.</p>
 {:else if inv}
 	<div class="grid grid-cols-2 gap-3">
 		<div class="rounded-xl border border-white/8 bg-white/[0.03] px-3 py-3">

@@ -52,5 +52,5 @@
 		</ul>
 	</div>
 {:else}
-	<p class="text-sm text-slate-500">No recent contacts for this scope.</p>
+	<p class="text-sm text-slate-500">No contacts yet.</p>
 {/if}
