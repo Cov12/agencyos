@@ -22,6 +22,19 @@ from open_webui.internal.db import Base
 from apps.agencyos.backend.models.db import AgencyOSOrganization
 from apps.agencyos.backend.services import cortex_bridge
 
+
+# ensure_department_agents first links the org's company via ensure-agent (its own suite:
+# test_cortex_bridge_agent.py). Stubbed here so these tests see only the department POST.
+@pytest.fixture(autouse=True)
+def _no_prelink(monkeypatch):
+    calls = []
+
+    async def _fake(db, org_id):
+        calls.append(org_id)
+
+    monkeypatch.setattr(cortex_bridge, "ensure_org_linked", _fake)
+    return calls
+
 ORG = "org-internal-agents"
 CUID = "cmorgagentsxxxxxxxxxxxxxx"
 SECRET = "agents-secret"
@@ -202,3 +215,25 @@ def test_degrades_to_ok_false_without_raising(db, monkeypatch, make_fake, expect
     assert result["ok"] is False
     assert result["error"]
     assert result["status"] == expected_status
+
+
+def test_links_the_org_before_provisioning(db, monkeypatch, _no_prelink):
+    order = []
+
+    async def _prelink(db_, org_id):
+        order.append(("link", org_id))
+
+    monkeypatch.setattr(cortex_bridge, "ensure_org_linked", _prelink)
+    fake = _FakeClient(_FakeResponse(200, {"agents": []}))
+    _patch(monkeypatch, fake)
+    original_post = fake.post
+
+    async def _post(url, json=None, headers=None):
+        order.append(("post", url))
+        return await original_post(url, json=json, headers=headers)
+
+    fake.post = _post
+    asyncio.run(cortex_bridge.ensure_department_agents(db, ORG, ROLES))
+    assert order[0] == ("link", ORG)
+    assert order[1] == ("post", cortex_bridge._ensure_department_agents_url())
+
