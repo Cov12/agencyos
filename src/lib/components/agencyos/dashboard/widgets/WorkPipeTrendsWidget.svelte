@@ -29,6 +29,8 @@
 	$: trends = isEmpty(data) ? null : data;
 	$: points = (trends?.series ?? []) as WorkPipeTrendPoint[];
 	$: totals = trends?.totals ?? { contacts: 0, deals: 0, invoices: 0 };
+	$: noActivity =
+		!!trends && (totals.contacts ?? 0) === 0 && (totals.deals ?? 0) === 0 && (totals.invoices ?? 0) === 0;
 	$: maxY = Math.max(
 		1,
 		...points.map((p) => Math.max(p.contacts, p.deals, p.invoices))
@@ -69,6 +71,8 @@
 
 {#if isEmpty(data)}
 	<p class="text-sm text-slate-500">{data.emptyState}</p>
+{:else if trends && noActivity}
+	<p class="text-sm text-slate-500">No activity in the last {trends.days} days yet.</p>
 {:else if trends && points.length > 0}
 	<div class="flex flex-col gap-3">
 		<!-- Legend (always present for >= 2 series) with window totals -->
