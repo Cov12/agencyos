@@ -32,6 +32,19 @@ from apps.agencyos.backend.routers import onboarding
 from apps.agencyos.backend.services import cortex_bridge
 
 
+# ensure_department_agents first links the org's company via ensure-agent (its own suite:
+# test_cortex_bridge_agent.py). Stubbed here so these tests see only the department POST.
+@pytest.fixture(autouse=True)
+def _no_prelink(monkeypatch):
+    calls = []
+
+    async def _fake(db, org_id):
+        calls.append(org_id)
+
+    monkeypatch.setattr(cortex_bridge, "ensure_org_linked", _fake)
+    return calls
+
+
 TEST_JWT_SECRET = "test-onboarding-secret-long-enough-for-hs256"
 TEST_BRIDGE_SECRET = "test-bridge-shhh"
 TEST_ORG_ID = "org-onboarding-agents-1"

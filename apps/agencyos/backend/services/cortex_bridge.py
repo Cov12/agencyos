@@ -341,29 +341,115 @@ def _ensure_agent_url() -> str:
     return origin + "/api/bridge/ensure-agent"
 
 
-async def _ensure_company_agent(company_id: str) -> Optional[str]:
-    """Ask Cortex to guarantee this company has its assistant agent (idempotent) and
-    return the agent id. Cortex creates the company + clones the template agent on the
-    first call. Returns None on any failure — never raises into the chat path."""
+# Key in AgencyOSOrganization.settings recording that Cortex confirmed this org's company is
+# linked to its WorkPipe business. Set only on Cortex's explicit `workpipeLinked: true`, so a
+# Cortex that predates the link (or failed to write it) leaves it unset and we retry later.
+_CORTEX_LINK_KEY = "cortexWorkpipeLinked"
+
+
+def _org_link_fields(
+    db: Optional[Session], internal_org_id: Optional[str], company_id: str
+) -> dict:
+    """ensure-agent fields that link this org's Cortex company to its WorkPipe business:
+    {portalOrgId, orgName?}. Empty unless the org has a stored Portal id that resolves to
+    `company_id` — so the default-company fallback (no Portal id) never claims a link, and
+    Cortex's own resolver check always passes. Never raises into the chat path."""
+    if db is None or not internal_org_id or not company_id:
+        return {}
+    try:
+        from ..models.db import AgencyOSOrganization
+
+        row = (
+            db.query(AgencyOSOrganization)
+            .filter(AgencyOSOrganization.id == internal_org_id)
+            .one_or_none()
+        )
+    except Exception as e:
+        logger.warning(f"cortex_bridge: link lookup failed for org {internal_org_id}: {e}")
+        try:
+            db.rollback()
+        except Exception:
+            pass
+        return {}
+    portal_org_id = ((row.portal_org_id or "").strip() if row else "")
+    if not portal_org_id or _resolve_company_id(portal_org_id) != company_id:
+        return {}
+    fields = {"portalOrgId": portal_org_id}
+    name = (row.name or "").strip()
+    if name:
+        fields["orgName"] = name
+    return fields
+
+
+def _org_link_confirmed(db: Optional[Session], internal_org_id: Optional[str]) -> bool:
+    if db is None or not internal_org_id:
+        return False
+    try:
+        from ..models.db import AgencyOSOrganization
+
+        row = db.query(AgencyOSOrganization).filter_by(id=internal_org_id).first()
+        settings = row.settings if row is not None and isinstance(row.settings, dict) else {}
+        return bool(settings.get(_CORTEX_LINK_KEY))
+    except Exception:
+        return False
+
+
+def _mark_org_linked(db: Optional[Session], internal_org_id: Optional[str]) -> None:
+    if db is None or not internal_org_id:
+        return
+    try:
+        from ..models.db import AgencyOSOrganization
+
+        row = db.query(AgencyOSOrganization).filter_by(id=internal_org_id).first()
+        if row is None:
+            return
+        current = row.settings if isinstance(row.settings, dict) else {}
+        if current.get(_CORTEX_LINK_KEY):
+            return
+        # The JSON column is not mutation-tracked: assign a NEW dict, never mutate in place.
+        row.settings = {**current, _CORTEX_LINK_KEY: True}
+        db.commit()
+    except Exception:
+        try:
+            db.rollback()
+        except Exception:
+            pass
+
+
+async def _provision_agent(
+    company_id: str, link_fields: Optional[dict] = None
+) -> tuple[Optional[str], bool]:
+    """Ask Cortex to guarantee this company has its assistant agent (idempotent). Cortex
+    creates the company + clones the template agent on the first call. With `link_fields`
+    ({portalOrgId, orgName}) it also links the company to its WorkPipe business and names it.
+
+    Returns (agentId, linked): agentId is None on any failure; linked is True only when
+    Cortex reported `workpipeLinked: true`. Never raises into the chat path."""
     secret = _bridge_secret()
     if not secret or not company_id:
-        return None
+        return None, False
     headers = {"Content-Type": "application/json", "x-wbit-bridge-secret": secret}
+    body = {"companyId": company_id, **(link_fields or {})}
     try:
         async with httpx.AsyncClient(timeout=_timeout_s()) as client:
-            resp = await client.post(
-                _ensure_agent_url(), json={"companyId": company_id}, headers=headers
-            )
+            resp = await client.post(_ensure_agent_url(), json=body, headers=headers)
     except httpx.RequestError as e:
         logger.warning(f"cortex_bridge: ensure-agent request error: {e}")
-        return None
+        return None, False
     if resp.status_code not in (200, 201):
         logger.warning(f"cortex_bridge: ensure-agent returned {resp.status_code}")
-        return None
+        return None, False
     try:
-        return (resp.json() or {}).get("agentId") or None
+        data = resp.json() or {}
     except ValueError:
-        return None
+        return None, False
+    return (data.get("agentId") or None), data.get("workpipeLinked") is True
+
+
+async def _ensure_company_agent(company_id: str) -> Optional[str]:
+    """Agent id only, with no WorkPipe link fields (the chat 404 re-provision path)."""
+    agent_id, _ = await _provision_agent(company_id)
+    return agent_id
 
 
 def _cached_agent_id(db: Optional[Session], org_id: Optional[str]) -> Optional[str]:
@@ -402,17 +488,39 @@ async def _resolve_agent_id(db: Optional[Session], org_id: str, company_id: str)
     """Resolve the assistant agent id for this org's Cortex company: a cached per-org id,
     else the WBIT pin for the default company, else provision idempotently via ensure-agent
     (caching the result). Falls back to the configured default agent if provisioning fails
-    (behaviour no worse than before this change)."""
+    (behaviour no worse than before this change).
+
+    An org whose company Cortex hasn't yet confirmed as linked to its WorkPipe business
+    calls ensure-agent once more even with a cached id: Portal doesn't offer Cortex to
+    customer orgs, so this call is how their company gets the link WorkPipe tools need.
+    ensure-agent is idempotent and returns the same assistant. The default (WBIT-pinned)
+    company is left exactly as before."""
     cached = _cached_agent_id(db, org_id)
-    if cached:
+    is_default = company_id == _default_company_id()
+    link_fields = {} if is_default else _org_link_fields(db, org_id, company_id)
+    if cached and (not link_fields or _org_link_confirmed(db, org_id)):
         return cached
-    if company_id == _default_company_id() and os.environ.get("WBIT_AGENT_ID", "").strip():
+    if not cached and is_default and os.environ.get("WBIT_AGENT_ID", "").strip():
         return os.environ["WBIT_AGENT_ID"].strip()
-    provisioned = await _ensure_company_agent(company_id)
+    provisioned, linked = await _provision_agent(company_id, link_fields)
+    if linked:
+        _mark_org_linked(db, org_id)
     if provisioned:
         _store_agent_id(db, org_id, provisioned)
         return provisioned
-    return _agent_id()
+    return cached or _agent_id()
+
+
+async def ensure_org_linked(db: Optional[Session], org_id: Optional[str]) -> None:
+    """Best-effort: make sure this org's Cortex company exists, has its assistant, and is
+    linked to its WorkPipe business, before onboarding provisions specialists or files
+    starter tasks (which may use WorkPipe tools before the first chat). Never raises."""
+    if not org_id:
+        return
+    try:
+        await _resolve_agent_id(db, org_id, _resolve_company_for_chat(db, org_id))
+    except Exception as e:
+        logger.warning(f"cortex_bridge: ensure_org_linked failed for org {org_id}: {e}")
 
 
 # --- high-level entry --------------------------------------------------------
@@ -684,6 +792,10 @@ async def ensure_department_agents(
 
     if not roles:
         return {"ok": False, "error": "no roles to provision", "status": None}
+
+    # Link (and name) the company first: specialists and starter tasks can call WorkPipe
+    # tools before the org's first chat would otherwise establish the link.
+    await ensure_org_linked(db, org_id)
 
     company_id = _resolve_company_for_chat(db, org_id)
     if not company_id:
