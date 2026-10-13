@@ -72,21 +72,102 @@ export const preselectDepartmentsByRole = <T extends Pick<Department, 'id' | 'ro
 
 /** Suggested first tasks per onboarding department (keyed by department id), offered as an
  * opt-in checklist in FinalSetup. Static for v1. */
-export const STARTER_TASKS: Record<string, string[]> = {
-	marketing: ['Draft a launch announcement plan', 'Audit our current marketing channels'],
-	sales: ['Organize the pipeline stages', 'Review and qualify current leads'],
-	'customer-success': ['Set up the support intake', 'Triage open customer issues'],
-	finance: ["Review this month's budget", 'Set up invoicing'],
-	design: ['Assemble the brand basics', 'Draft the key screens and assets'],
-	content: ['Plan a 2-week content calendar', 'Draft the first posts'],
-	operations: ['Map the core workflows', 'Define the first milestone'],
-	engineering: ['Review the tech stack', 'Scope the first build']
+/** A starter task the wizard offers: what it's called, and what the team hands back. The
+ * description is shown in the task's info popover and sent with the filed issue, so the
+ * CEO knows what's expected. Tasks fit a brand-new workspace (nothing in WorkPipe yet), and
+ * agents can read WorkPipe but not create records there, so they deliver plans and drafts. */
+export interface StarterTask {
+	title: string;
+	description: string;
+}
+
+export const STARTER_TASKS: Record<string, StarterTask[]> = {
+	marketing: [
+		{
+			title: 'Plan your first campaign',
+			description: 'One-page plan: audience, message, channels and a 30-day schedule'
+		},
+		{
+			title: 'Write your brand positioning',
+			description: 'A short positioning statement and three key messages'
+		}
+	],
+	sales: [
+		{
+			title: 'Set up your first pipeline',
+			description: 'Proposed stages and what moves a deal forward, ready to create in WorkPipe'
+		},
+		{
+			title: 'Define your ideal customer',
+			description: 'Who to target, and how to tell a good lead from a poor fit'
+		}
+	],
+	'customer-success': [
+		{
+			title: 'Set up your support intake',
+			description: "How requests come in, how they're categorized, and response-time targets"
+		},
+		{
+			title: 'Draft your first help replies',
+			description: 'Reply templates for the questions customers ask most'
+		}
+	],
+	finance: [
+		{
+			title: 'Set up invoicing',
+			description: 'Recommended payment terms, numbering and a reminder schedule'
+		},
+		{
+			title: 'Draft a starter budget',
+			description: "A simple monthly budget outline based on what you've shared"
+		}
+	],
+	design: [
+		{
+			title: 'Assemble the brand basics',
+			description: 'Colors, fonts and logo usage in one reference'
+		},
+		{
+			title: 'List the assets you need first',
+			description: 'A prioritized list of graphics and templates to make first'
+		}
+	],
+	content: [
+		{
+			title: 'Plan a 2-week content calendar',
+			description: 'Topics and dates for your first two weeks'
+		},
+		{
+			title: 'Draft your first posts',
+			description: 'Ready-to-edit drafts for the first few calendar items'
+		}
+	],
+	operations: [
+		{
+			title: 'Map your core workflows',
+			description: 'Step-by-step outlines of how work moves through the business'
+		},
+		{
+			title: 'Set your first 30-day milestone',
+			description: 'One measurable goal with the steps to reach it'
+		}
+	],
+	engineering: [
+		{
+			title: 'Review your current tools',
+			description: 'What you use today, the gaps, and what to connect first'
+		},
+		{
+			title: 'Scope your first automation',
+			description: 'One repetitive task to automate, with the steps and the tools involved'
+		}
+	]
 };
 
 export interface DepartmentStarterTasks {
 	deptId: string;
 	deptName: string;
-	tasks: { title: string }[];
+	tasks: StarterTask[];
 }
 
 /** Starter tasks for the given (selected) departments, in department order. Departments
@@ -99,8 +180,18 @@ export const starterTasksFor = (
 		.map((d) => ({
 			deptId: d.id,
 			deptName: d.name,
-			tasks: STARTER_TASKS[d.id].map((title) => ({ title }))
+			tasks: STARTER_TASKS[d.id].map((task) => ({ ...task }))
 		}));
+
+/** The issue filed for a checked starter task: its title, and a description that says what
+ * to deliver plus where the request came from. */
+export const starterTaskIssue = (
+	task: StarterTask,
+	deptName: string
+): { title: string; description: string } => ({
+	title: task.title,
+	description: `${task.description}. Starter task for the ${deptName} department, picked during onboarding.`
+});
 
 // ── Notifications ────────────────────────────────────────────
 export interface Notification {

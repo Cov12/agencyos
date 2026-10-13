@@ -11,6 +11,7 @@
 		onboardingComplete,
 		resetOnboardingAnswers,
 		selectedDepartments,
+		starterTaskIssue,
 		starterTasksFor
 	} from '$lib/stores/agencyos';
 	import {
@@ -38,6 +39,8 @@
 	/** Opt-in starter tasks for the selected departments. Nothing is checked by default —
 	 * agents only start work the user explicitly launches here. */
 	$: starterGroups = starterTasksFor(specialists);
+	/** The task whose info popover is pinned open by a tap/click (hover and focus open it too). */
+	let openInfo: string | null = null;
 	/** Checked tasks, keyed `deptId::index`. */
 	let checkedTasks = new Set<string>();
 	const taskKey = (deptId: string, index: number) => `${deptId}::${index}`;
@@ -54,10 +57,7 @@
 		return starterGroups.flatMap((group) =>
 			group.tasks
 				.filter((_, index) => checkedTasks.has(taskKey(group.deptId, index)))
-				.map((task) => ({
-					title: task.title,
-					description: `Starter task for the ${group.deptName} department, picked during onboarding.`
-				}))
+				.map((task) => starterTaskIssue(task, group.deptName))
 		);
 	}
 	$: checkedCount = starterGroups.reduce(
@@ -267,29 +267,59 @@
 										{#each group.tasks as task, index}
 											{@const key = taskKey(group.deptId, index)}
 											{@const checked = checkedTasks.has(key)}
-											<button
-												type="button"
-												role="checkbox"
-												aria-checked={checked}
-												disabled={launching}
-												on:click={() => toggleTask(key)}
-												class={`flex items-center gap-3 rounded-lg border px-3 py-2.5 text-left text-sm transition-all disabled:cursor-not-allowed disabled:opacity-60 ${
+											<div
+												class={`flex items-center rounded-lg border text-sm transition-all ${
 													checked
 														? 'border-[#6961ff]/60 bg-[#6961ff]/15 text-white'
 														: 'border-white/10 bg-white/[0.03] text-slate-300 hover:border-white/20 hover:bg-white/10'
 												}`}
 											>
-												<span
-													class={`flex h-5 w-5 shrink-0 items-center justify-center rounded border transition-colors ${
-														checked ? 'border-[#6961ff] bg-[#6961ff]' : 'border-white/25 bg-transparent'
-													}`}
+												<button
+													type="button"
+													role="checkbox"
+													aria-checked={checked}
+													disabled={launching}
+													on:click={() => toggleTask(key)}
+													class="flex min-w-0 flex-1 items-center gap-3 px-3 py-2.5 text-left disabled:cursor-not-allowed disabled:opacity-60"
 												>
-													{#if checked}
-														<MaterialIcon icon="check" size={14} class="text-white" />
-													{/if}
-												</span>
-												<span>{task.title}</span>
-											</button>
+													<span
+														class={`flex h-5 w-5 shrink-0 items-center justify-center rounded border transition-colors ${
+															checked ? 'border-[#6961ff] bg-[#6961ff]' : 'border-white/25 bg-transparent'
+														}`}
+													>
+														{#if checked}
+															<MaterialIcon icon="check" size={14} class="text-white" />
+														{/if}
+													</span>
+													<span>{task.title}</span>
+												</button>
+												<!-- What the task delivers. A sibling of the checkbox (not inside it), so
+												     opening it never toggles the task. Shown on hover, keyboard focus or tap;
+												     always in the DOM so screen readers get it via aria-describedby. -->
+												<div class="group relative shrink-0 pr-2">
+													<button
+														type="button"
+														class="flex h-7 w-7 items-center justify-center rounded-md text-slate-400 transition-colors hover:text-white focus-visible:text-white focus-visible:outline focus-visible:outline-2 focus-visible:outline-[#6961ff]"
+														aria-label={`What "${task.title}" involves`}
+														aria-describedby={`${key}-info`}
+														aria-expanded={openInfo === key}
+														on:click={() => (openInfo = openInfo === key ? null : key)}
+														on:keydown={(e) => e.key === 'Escape' && (openInfo = null)}
+														on:blur={() => openInfo === key && (openInfo = null)}
+													>
+														<MaterialIcon icon="info" size={16} />
+													</button>
+													<span
+														id={`${key}-info`}
+														role="tooltip"
+														class={`pointer-events-none absolute right-0 bottom-full z-20 mb-2 w-60 rounded-lg border border-white/10 bg-[#11131a]/95 px-3 py-2 text-xs leading-relaxed text-slate-200 shadow-lg transition-opacity group-hover:visible group-hover:opacity-100 group-focus-within:visible group-focus-within:opacity-100 ${
+															openInfo === key ? 'visible opacity-100' : 'invisible opacity-0'
+														}`}
+													>
+														{task.description}
+													</span>
+												</div>
+											</div>
 										{/each}
 									</div>
 								</div>
